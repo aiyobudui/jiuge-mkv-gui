@@ -52,7 +52,7 @@
 
 ```bash
 # 克隆仓库
-git clone https://github.com/你的用户名/jiuge-mkv-gui.git
+git clone https://github.com/aiyobudui/jiuge-mkv-gui.git
 cd jiuge-mkv-gui
 
 # 安装依赖
@@ -60,10 +60,24 @@ pip install -r requirements.txt
 
 # 运行程序
 python main.py
+```
 
-# 编译为可执行文件
+### 方式三：从源码编译
+
+```bash
+# 克隆仓库
+git clone https://github.com/aiyobudui/jiuge-mkv-gui.git
+cd jiuge-mkv-gui
+
+# 一键编译（推荐）
+build.bat
+
+# 或手动编译
+pip install -r requirements.txt
 python -m PyInstaller --windowed --name "jiuge-mkv-gui" main.py
 ```
+
+编译完成后，可执行文件位于 `dist/jiuge-mkv-gui/` 目录。
 
 ## 使用说明
 
