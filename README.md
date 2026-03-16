@@ -42,13 +42,7 @@
 
 ## 安装使用
 
-### 方式一：直接运行编译版本
-
-1. 下载 `dist/jiuge-mkv-gui` 文件夹
-2. 运行 `jiuge-mkv-gui.exe`
-3. 首次运行需要设置 mkvmerge.exe 路径
-
-### 方式二：从源码运行
+### 方式一：从源码运行
 
 ```bash
 # 克隆仓库
@@ -62,7 +56,7 @@ pip install -r requirements.txt
 python main.py
 ```
 
-### 方式三：从源码编译
+### 方式二：从源码编译
 
 ```bash
 # 克隆仓库
