@@ -140,7 +140,9 @@ python -m PyInstaller --windowed --name "jiuge-mkv-gui" main.py
 
 ## 许可证
 
-MIT License
+本项目采用 MIT 许可证，详见 [LICENSE](LICENSE) 文件。
+
+本项目使用了第三方开源库，详见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
 
 ## 贡献
 
