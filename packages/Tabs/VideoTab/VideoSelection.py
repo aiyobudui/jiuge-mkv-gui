@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import os
-from PySide6.QtCore import Signal, Qt
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from PySide6.QtCore import Signal, Qt, QThread
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, 
     QPushButton, QTableWidget, QTableWidgetItem,
@@ -69,17 +70,17 @@ class VideoSelectionSetting(QWidget):
         
         self.clear_button = QPushButton("清空")
         self.clear_button.setFixedWidth(60)
-        self.clear_button.setIcon(GlobalIcons.ClearIcon)
+        self.clear_button.setIcon(GlobalIcons.ClearIcon.get())
         path_layout.addWidget(self.clear_button)
         
         self.refresh_button = QPushButton("刷新")
         self.refresh_button.setFixedWidth(60)
-        self.refresh_button.setIcon(GlobalIcons.RefreshIcon)
+        self.refresh_button.setIcon(GlobalIcons.RefreshIcon.get())
         path_layout.addWidget(self.refresh_button)
         
         self.browse_button = QPushButton("浏览")
         self.browse_button.setFixedWidth(60)
-        self.browse_button.setIcon(GlobalIcons.FolderIcon)
+        self.browse_button.setIcon(GlobalIcons.FolderIcon.get())
         path_layout.addWidget(self.browse_button)
         
         source_layout.addLayout(path_layout)
@@ -190,19 +191,6 @@ class VideoSelectionSetting(QWidget):
             GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST.append(file_path)
             GlobalSetting.VIDEO_FILES_SIZE_LIST.append(file_size)
             
-            if has_mkvmerge:
-                subtitle_tracks = get_subtitle_tracks(file_path)
-                audio_tracks = get_audio_tracks(file_path)
-                attachment_tracks = get_attachments(file_path)
-            else:
-                subtitle_tracks = []
-                audio_tracks = []
-                attachment_tracks = []
-            
-            GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO.append(subtitle_tracks)
-            GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO.append(audio_tracks)
-            GlobalSetting.VIDEO_OLD_ATTACHMENTS_INFO.append(attachment_tracks)
-            
             row = self.video_table.rowCount()
             self.video_table.insertRow(row)
             
@@ -217,28 +205,60 @@ class VideoSelectionSetting(QWidget):
             
             self.video_table.setItem(row, 1, QTableWidgetItem(file_name))
             
-            if has_mkvmerge:
-                sub_item = QTableWidgetItem(str(len(subtitle_tracks)))
-                sub_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.video_table.setItem(row, 2, sub_item)
-                
-                audio_item = QTableWidgetItem(str(len(audio_tracks)))
-                audio_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.video_table.setItem(row, 3, audio_item)
-            else:
-                sub_item = QTableWidgetItem("-")
-                sub_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.video_table.setItem(row, 2, sub_item)
-                
-                audio_item = QTableWidgetItem("-")
-                audio_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.video_table.setItem(row, 3, audio_item)
+            sub_item = QTableWidgetItem("...")
+            sub_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.video_table.setItem(row, 2, sub_item)
+            
+            audio_item = QTableWidgetItem("...")
+            audio_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.video_table.setItem(row, 3, audio_item)
             
             size_item = QTableWidgetItem(get_readable_filesize(file_size))
             size_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self.video_table.setItem(row, 4, size_item)
         
+        if has_mkvmerge:
+            self.load_track_info_threaded()
+        
         self.video_list_updated.emit()
+    
+    def load_track_info_threaded(self):
+        def get_track_info(file_path):
+            subtitle_tracks = get_subtitle_tracks(file_path)
+            audio_tracks = get_audio_tracks(file_path)
+            attachment_tracks = get_attachments(file_path)
+            return subtitle_tracks, audio_tracks, attachment_tracks
+        
+        file_paths = GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST.copy()
+        
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = {executor.submit(get_track_info, fp): i for i, fp in enumerate(file_paths)}
+            
+            for future in as_completed(futures):
+                i = futures[future]
+                try:
+                    subtitle_tracks, audio_tracks, attachment_tracks = future.result()
+                    GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO.append((i, subtitle_tracks))
+                    GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO.append((i, audio_tracks))
+                    GlobalSetting.VIDEO_OLD_ATTACHMENTS_INFO.append((i, attachment_tracks))
+                    
+                    sub_item = QTableWidgetItem(str(len(subtitle_tracks)))
+                    sub_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    self.video_table.setItem(i, 2, sub_item)
+                    
+                    audio_item = QTableWidgetItem(str(len(audio_tracks)))
+                    audio_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    self.video_table.setItem(i, 3, audio_item)
+                except Exception:
+                    pass
+        
+        GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO.sort(key=lambda x: x[0])
+        GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO.sort(key=lambda x: x[0])
+        GlobalSetting.VIDEO_OLD_ATTACHMENTS_INFO.sort(key=lambda x: x[0])
+        
+        GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO = [x[1] for x in GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO]
+        GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO = [x[1] for x in GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO]
+        GlobalSetting.VIDEO_OLD_ATTACHMENTS_INFO = [x[1] for x in GlobalSetting.VIDEO_OLD_ATTACHMENTS_INFO]
     
     def show_media_info(self):
         selected_rows = self.video_table.selectedItems()

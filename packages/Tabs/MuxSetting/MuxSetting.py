@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 from packages.Startup import GlobalIcons
 from packages.Startup.Options import Options
 from packages.Tabs.GlobalSetting import GlobalSetting, get_readable_filesize
+from packages.Tabs.MuxSetting.TrackSelectionDialog import TrackSelectionDialog
 
 
 class CheckableComboBox(QComboBox):
@@ -53,6 +54,16 @@ class MuxSettingTab(QWidget):
         super().__init__()
         self.subtitle_track_items = []
         self.audio_track_items = []
+        self.track_selections = {
+            'audio': {}, 
+            'subtitle': {}, 
+            'default_audio': {}, 
+            'default_subtitle': {},
+            'external_audio': {},
+            'external_subtitle': {},
+            'audio_languages': {},
+            'subtitle_languages': {}
+        }
         self.setup_ui()
         self.connect_signals()
         self.total_tasks = 0
@@ -78,6 +89,12 @@ class MuxSettingTab(QWidget):
         self.browse_output_button.setFixedWidth(60)
         output_layout.addWidget(self.browse_output_button)
         
+        output_layout.addWidget(QLabel("输出格式："))
+        self.output_format_combo = QComboBox()
+        self.output_format_combo.addItems(["MP4", "MKV"])
+        self.output_format_combo.setFixedWidth(80)
+        output_layout.addWidget(self.output_format_combo)
+        
         output_group.setLayout(output_layout)
         top_layout.addWidget(output_group)
         
@@ -98,73 +115,44 @@ class MuxSettingTab(QWidget):
         self.start_button.setStyleSheet("background-color: #0078d4; color: white; font-weight: bold;")
         button_layout.addWidget(self.start_button)
         
-        self.stop_button = QPushButton("停止")
-        self.stop_button.setFixedWidth(60)
-        self.stop_button.setEnabled(False)
-        button_layout.addWidget(self.stop_button)
-        
         button_group.setLayout(button_layout)
         top_layout.addWidget(button_group)
         
         main_layout.addLayout(top_layout)
         
         options_group = QGroupBox("混流选项")
-        options_layout = QVBoxLayout()
-        
-        row1_layout = QHBoxLayout()
-        self.keep_subtitle_check = QCheckBox("保留字幕")
-        self.keep_subtitle_check.setChecked(True)
-        row1_layout.addWidget(self.keep_subtitle_check)
-        
-        self.subtitle_select_button = QPushButton("选择字幕轨...")
-        self.subtitle_select_button.setFixedWidth(120)
-        self.subtitle_select_menu = QMenu(self)
-        self.subtitle_select_button.setMenu(self.subtitle_select_menu)
-        row1_layout.addWidget(self.subtitle_select_button)
-        
-        row1_layout.addWidget(QLabel("默认："))
-        self.default_subtitle_combo = QComboBox()
-        self.default_subtitle_combo.addItem("读取视频文件的默认字幕")
-        self.default_subtitle_combo.setFixedWidth(200)
-        row1_layout.addWidget(self.default_subtitle_combo)
-        
-        row1_layout.addSpacing(20)
+        options_layout = QHBoxLayout()
         
         self.add_crc_check = QCheckBox("CRC校验")
-        row1_layout.addWidget(self.add_crc_check)
+        options_layout.addWidget(self.add_crc_check)
         self.remove_crc_check = QCheckBox("移除旧CRC")
-        row1_layout.addWidget(self.remove_crc_check)
-        
-        row1_layout.addStretch()
-        options_layout.addLayout(row1_layout)
-        
-        row2_layout = QHBoxLayout()
-        self.keep_audio_check = QCheckBox("保留音轨")
-        self.keep_audio_check.setChecked(True)
-        row2_layout.addWidget(self.keep_audio_check)
-        
-        self.audio_select_button = QPushButton("选择音轨...")
-        self.audio_select_button.setFixedWidth(120)
-        self.audio_select_menu = QMenu(self)
-        self.audio_select_button.setMenu(self.audio_select_menu)
-        row2_layout.addWidget(self.audio_select_button)
-        
-        row2_layout.addWidget(QLabel("默认："))
-        self.default_audio_combo = QComboBox()
-        self.default_audio_combo.addItem("读取视频文件的默认音轨")
-        self.default_audio_combo.setFixedWidth(200)
-        row2_layout.addWidget(self.default_audio_combo)
-        
-        row2_layout.addSpacing(20)
+        options_layout.addWidget(self.remove_crc_check)
         
         self.keep_log_check = QCheckBox("保留日志")
-        row2_layout.addWidget(self.keep_log_check)
+        options_layout.addWidget(self.keep_log_check)
         self.abort_on_error_check = QCheckBox("出错中止")
         self.abort_on_error_check.setChecked(True)
-        row2_layout.addWidget(self.abort_on_error_check)
+        options_layout.addWidget(self.abort_on_error_check)
         
-        row2_layout.addStretch()
-        options_layout.addLayout(row2_layout)
+        options_layout.addStretch()
+        
+        options_layout.addWidget(QLabel("轨道选择："))
+        self.track_select_button = QPushButton("选择想要保留的轨道")
+        self.track_select_button.setFixedWidth(150)
+        self.track_select_button.setEnabled(False)
+        self.track_select_button.setStyleSheet("""
+            QPushButton {
+                background-color: #e0e0e0;
+                color: #999999;
+                border: 1px solid #cccccc;
+                border-radius: 4px;
+                padding: 5px 10px;
+            }
+            QPushButton:hover {
+                background-color: #d0d0d0;
+            }
+        """)
+        options_layout.addWidget(self.track_select_button)
         
         options_group.setLayout(options_layout)
         main_layout.addWidget(options_group)
@@ -192,15 +180,14 @@ class MuxSettingTab(QWidget):
         main_layout.addWidget(queue_group)
         
         progress_layout = QHBoxLayout()
-        progress_layout.addWidget(QLabel("总进度："))
+        progress_layout.addWidget(QLabel("总进度"))
         self.total_progress_bar = QProgressBar()
-        self.total_progress_bar.setFixedWidth(200)
+        self.total_progress_bar.setTextVisible(True)
+        self.total_progress_bar.setFormat("%p% - %v/%m")
         progress_layout.addWidget(self.total_progress_bar)
-        
-        self.progress_label = QLabel("已完成：0/00")
-        progress_layout.addWidget(self.progress_label)
-        progress_layout.addStretch()
-        main_layout.addLayout(progress_layout)
+        progress_group = QWidget()
+        progress_group.setLayout(progress_layout)
+        main_layout.addWidget(progress_group)
         
         self.setLayout(main_layout)
     
@@ -208,21 +195,29 @@ class MuxSettingTab(QWidget):
         self.browse_output_button.clicked.connect(self.browse_output_folder)
         self.clear_all_button.clicked.connect(self.clear_all_tasks)
         self.add_to_queue_button.clicked.connect(self.add_to_queue)
-        self.start_button.clicked.connect(self.start_muxing)
-        self.stop_button.clicked.connect(self.stop_muxing)
+        self.start_button.clicked.connect(self.toggle_muxing)
         
         self.update_task_signal.connect(self.on_update_task)
         self.update_progress_signal.connect(self.on_update_progress)
         self.muxing_finished_signal.connect(self.on_muxing_finished)
         
-        self.keep_audio_check.stateChanged.connect(self.on_keep_audio_changed)
-        self.keep_subtitle_check.stateChanged.connect(self.on_keep_subtitle_changed)
+        self.track_select_button.clicked.connect(self.show_track_selection_dialog)
     
-    def on_keep_audio_changed(self, state):
-        pass
-    
-    def on_keep_subtitle_changed(self, state):
-        pass
+    def show_track_selection_dialog(self):
+        if not GlobalSetting.VIDEO_FILES_LIST:
+            QMessageBox.warning(self, "警告", "请先添加视频文件")
+            return
+        dialog = TrackSelectionDialog(self)
+        if dialog.exec():
+            selections = dialog.get_selections()
+            self.track_selections['audio'] = selections['audio']
+            self.track_selections['subtitle'] = selections['subtitle']
+            self.track_selections['default_audio'] = selections['default_audio']
+            self.track_selections['default_subtitle'] = selections['default_subtitle']
+            self.track_selections['external_audio'] = selections['external_audio']
+            self.track_selections['external_subtitle'] = selections['external_subtitle']
+            self.track_selections['audio_languages'] = selections['audio_languages']
+            self.track_selections['subtitle_languages'] = selections['subtitle_languages']
     
     def on_update_task(self, row, status, progress, output_size):
         if row < self.task_table.rowCount():
@@ -231,12 +226,12 @@ class MuxSettingTab(QWidget):
             self.task_table.setItem(row, 4, QTableWidgetItem(output_size))
     
     def on_update_progress(self, progress, text):
+        self.total_progress_bar.setMaximum(100)
         self.total_progress_bar.setValue(progress)
-        self.progress_label.setText(text)
+        self.total_progress_bar.setFormat(f"%p% - {text}")
     
     def on_muxing_finished(self):
-        self.start_button.setEnabled(True)
-        self.stop_button.setEnabled(False)
+        self.set_button_state(is_muxing=False)
         GlobalSetting.MUXING_ON = False
         GlobalSetting.JOB_QUEUE_FINISHED = True
         
@@ -244,145 +239,85 @@ class MuxSettingTab(QWidget):
                           if self.task_table.item(i, 1) and self.task_table.item(i, 1).text() == "成功")
         fail_count = self.task_table.rowCount() - success_count
         
-        QMessageBox.information(
-            self,
-            "完成",
-            f"混流完成！\n成功: {success_count}\n失败: {fail_count}"
-        )
+        self.total_progress_bar.setValue(100)
+        if fail_count == 0:
+            self.total_progress_bar.setFormat(f"100% - 完成！成功: {success_count}")
+        else:
+            self.total_progress_bar.setFormat(f"100% - 完成！成功: {success_count}，失败: {fail_count}")
+    
+    def set_button_state(self, is_muxing):
+        if is_muxing:
+            self.start_button.setText("停止混流")
+            self.start_button.setStyleSheet("background-color: #d13438; color: white; font-weight: bold;")
+            self.clear_all_button.setEnabled(False)
+            self.add_to_queue_button.setEnabled(False)
+        else:
+            self.start_button.setText("开始混流")
+            self.start_button.setStyleSheet("background-color: #0078d4; color: white; font-weight: bold;")
+            self.clear_all_button.setEnabled(True)
+            self.add_to_queue_button.setEnabled(True)
+    
+    def toggle_muxing(self):
+        if GlobalSetting.MUXING_ON:
+            self.stop_muxing()
+        else:
+            self.start_muxing()
     
     def browse_output_folder(self):
-        folder = QFileDialog.getExistingDirectory(self, "选择输出目录")
+        folder = QFileDialog.getExistingDirectory(self, "选择输出文件夹")
         if folder:
             self.output_path_edit.setText(folder)
     
     def clear_all_tasks(self):
         self.task_table.setRowCount(0)
-        self.total_progress_bar.setValue(0)
-        self.progress_label.setText("已完成：0/0")
-        self.total_tasks = 0
-        self.completed_count = 0
+        self.track_selections = {
+            'audio': {}, 
+            'subtitle': {}, 
+            'default_audio': {}, 
+            'default_subtitle': {},
+            'external_audio': {},
+            'external_subtitle': {},
+            'audio_languages': {},
+            'subtitle_languages': {}
+        }
+        self.track_select_button.setEnabled(False)
+        self.track_select_button.setStyleSheet("""
+            QPushButton {
+                background-color: #e0e0e0;
+                color: #999999;
+                border: 1px solid #cccccc;
+                border-radius: 4px;
+                padding: 5px 10px;
+            }
+            QPushButton:hover {
+                background-color: #d0d0d0;
+            }
+        """)
     
     def update_track_menus(self):
-        self.subtitle_select_menu.clear()
-        self.audio_select_menu.clear()
-        self.default_audio_combo.clear()
-        self.default_subtitle_combo.clear()
-        
-        self.subtitle_track_items = []
-        self.audio_track_items = []
-        
-        default_audio_display = "无默认音轨"
-        default_subtitle_display = "无默认字幕"
-        
-        if GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO and len(GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO) > 0:
-            first_video_subs = GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO[0]
-            if first_video_subs:
-                for i, track in enumerate(first_video_subs):
-                    lang = track.get('language', 'und')
-                    name = track.get('name', '')
-                    is_default = track.get('is_default', False)
-                    display = f"#{i} [{lang}]"
-                    if name:
-                        display += f" {name}"
-                    
-                    action = self.subtitle_select_menu.addAction(display)
-                    action.setCheckable(True)
-                    action.setChecked(True)
-                    self.subtitle_track_items.append(action)
-                    
-                    self.default_subtitle_combo.addItem(display)
-                    
-                    if is_default:
-                        default_subtitle_display = display
-        
-        first_video_sub_list = GlobalSetting.SUBTITLE_FILES_ABSOLUTE_PATH_LIST.get(0, [])
-        if first_video_sub_list:
-            for i, sub_path in enumerate(first_video_sub_list):
-                sub_name = os.path.splitext(os.path.basename(sub_path))[0]
-                display = f"外部字幕 #{i} {sub_name}"
-                
-                action = self.subtitle_select_menu.addAction(display)
-                action.setCheckable(True)
-                action.setChecked(True)
-                self.subtitle_track_items.append(action)
-                
-                self.default_subtitle_combo.addItem(display)
-        
-        if self.default_subtitle_combo.count() == 0:
-            self.default_subtitle_combo.addItem("无字幕轨道")
-        
-        if GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO and len(GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO) > 0:
-            first_video_audios = GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO[0]
-            if first_video_audios:
-                for i, track in enumerate(first_video_audios):
-                    lang = track.get('language', 'und')
-                    name = track.get('name', '')
-                    is_default = track.get('is_default', False)
-                    display = f"#{i} [{lang}]"
-                    if name:
-                        display += f" {name}"
-                    
-                    action = self.audio_select_menu.addAction(display)
-                    action.setCheckable(True)
-                    action.setChecked(True)
-                    self.audio_track_items.append(action)
-                    
-                    self.default_audio_combo.addItem(display)
-                    
-                    if is_default:
-                        default_audio_display = display
-        
-        first_video_audio_list = GlobalSetting.AUDIO_FILES_ABSOLUTE_PATH_LIST.get(0, [])
-        if first_video_audio_list:
-            for i, audio_path in enumerate(first_video_audio_list):
-                audio_name = os.path.splitext(os.path.basename(audio_path))[0]
-                display = f"外部音轨 #{i} {audio_name}"
-                
-                action = self.audio_select_menu.addAction(display)
-                action.setCheckable(True)
-                action.setChecked(True)
-                self.audio_track_items.append(action)
-                
-                self.default_audio_combo.addItem(display)
-        
-        if self.default_audio_combo.count() == 0:
-            self.default_audio_combo.addItem("无音轨轨道")
-        
-        self.default_audio_combo.setCurrentText(default_audio_display)
-        self.default_subtitle_combo.setCurrentText(default_subtitle_display)
+        self.track_selections = {
+            'audio': {}, 
+            'subtitle': {}, 
+            'default_audio': {}, 
+            'default_subtitle': {},
+            'external_audio': {},
+            'external_subtitle': {},
+            'audio_languages': {},
+            'subtitle_languages': {}
+        }
     
     def get_selected_audio_tracks(self):
-        if not self.keep_audio_check.isChecked():
-            return {}
         result = {}
-        if GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO and len(GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO) > 0:
-            first_video_audios = GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO[0]
-            if first_video_audios:
-                selected_tracks = []
-                for i in range(len(first_video_audios)):
-                    if i < len(self.audio_track_items) and self.audio_track_items[i].isChecked():
-                        selected_tracks.append(i)
-                if not selected_tracks:
-                    selected_tracks = list(range(len(first_video_audios)))
-                for video_idx in range(len(GlobalSetting.VIDEO_FILES_LIST)):
-                    result[video_idx] = selected_tracks.copy()
+        if self.track_selections['audio']:
+            for video_idx, track_ids in self.track_selections['audio'].items():
+                result[video_idx] = track_ids
         return result
     
     def get_selected_subtitle_tracks(self):
-        if not self.keep_subtitle_check.isChecked():
-            return {}
         result = {}
-        if GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO and len(GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO) > 0:
-            first_video_subs = GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO[0]
-            if first_video_subs:
-                selected_tracks = []
-                for i in range(len(first_video_subs)):
-                    if i < len(self.subtitle_track_items) and self.subtitle_track_items[i].isChecked():
-                        selected_tracks.append(i)
-                if not selected_tracks:
-                    selected_tracks = list(range(len(first_video_subs)))
-                for video_idx in range(len(GlobalSetting.VIDEO_FILES_LIST)):
-                    result[video_idx] = selected_tracks.copy()
+        if self.track_selections['subtitle']:
+            for video_idx, track_ids in self.track_selections['subtitle'].items():
+                result[video_idx] = track_ids
         return result
     
     def add_to_queue(self):
@@ -408,7 +343,24 @@ class MuxSettingTab(QWidget):
         
         self.total_tasks = self.task_table.rowCount()
         self.completed_count = 0
-        self.progress_label.setText(f"已完成：0/{self.total_tasks}")
+        
+        self.track_select_button.setEnabled(True)
+        self.track_select_button.setStyleSheet("""
+            QPushButton {
+                background-color: #0078d4;
+                color: white;
+                border: 1px solid #006cbd;
+                border-radius: 4px;
+                padding: 5px 10px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #106ebe;
+            }
+            QPushButton:pressed {
+                background-color: #005a9e;
+            }
+        """)
     
     def start_muxing(self):
         if self.task_table.rowCount() == 0:
@@ -424,8 +376,7 @@ class MuxSettingTab(QWidget):
             QMessageBox.warning(self, "警告", "请先设置输出目录")
             return
         
-        self.start_button.setEnabled(False)
-        self.stop_button.setEnabled(True)
+        self.set_button_state(is_muxing=True)
         GlobalSetting.MUXING_ON = True
         self.stop_requested = False
         self.completed_count = 0
@@ -435,11 +386,17 @@ class MuxSettingTab(QWidget):
         thread_count = 4
         self.muxing_thread = threading.Thread(target=self.run_muxing_tasks_parallel, args=(thread_count,), daemon=True)
         self.muxing_thread.start()
-        
+    
     def run_muxing_tasks_parallel(self, thread_count):
+        total_tasks = self.task_table.rowCount()
+        self.update_progress_signal.emit(0, f"正在处理 0/{total_tasks}")
+        
         futures = {}
+        completed = [0]
+        lock = threading.Lock()
+        
         with ThreadPoolExecutor(max_workers=thread_count) as executor:
-            for i in range(self.task_table.rowCount()):
+            for i in range(total_tasks):
                 if self.stop_requested:
                     break
                 
@@ -451,27 +408,46 @@ class MuxSettingTab(QWidget):
                 futures[future] = i
             
             for future in as_completed(futures):
-                if not self.stop_requested:
-                    self.muxing_finished_signal.emit()
+                task_index = futures[future]
+                try:
+                    success, output_size = future.result()
+                    if success:
+                        self.update_task_signal.emit(task_index, "成功", "100%", output_size)
+                    else:
+                        self.update_task_signal.emit(task_index, "失败", "0%", "-")
+                except Exception:
+                    self.update_task_signal.emit(task_index, "失败", "0%", "-")
+                
+                with lock:
+                    completed[0] += 1
+                progress = int((completed[0] / total_tasks) * 100)
+                self.update_progress_signal.emit(progress, f"正在处理 {completed[0]}/{total_tasks}")
+        
+        if not self.stop_requested:
+            self.muxing_finished_signal.emit()
     
     def stop_muxing(self):
         self.stop_requested = True
         GlobalSetting.MUXING_ON = False
-        self.start_button.setEnabled(True)
-        self.stop_button.setEnabled(False)
+        self.set_button_state(is_muxing=False)
     
     def process_single_task(self, task_index, args):
         self.update_task_signal.emit(task_index, "执行中", "50%", "-")
         
         try:
+            env = os.environ.copy()
+            env['PYTHONIOENCODING'] = 'utf-8'
+            
             result = subprocess.run(
                 [Options.Mkvmerge_Path] + args,
                 capture_output=True,
-                text=True,
-                creationflags=subprocess.CREATE_NO_WINDOW
+                encoding='utf-8',
+                errors='replace',
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                env=env
             )
             
-            if result.returncode == 0:
+            if result.returncode in [0, 1]:
                 output_path = args[1]
                 if os.path.exists(output_path):
                     output_size = get_readable_filesize(os.path.getsize(output_path))
@@ -487,7 +463,8 @@ class MuxSettingTab(QWidget):
         output_dir = self.output_path_edit.text()
         if output_dir:
             video_name = os.path.splitext(os.path.basename(video_path))[0]
-            return os.path.join(output_dir, video_name + ".mkv")
+            output_format = self.output_format_combo.currentText().lower()
+            return os.path.join(output_dir, video_name + "." + output_format)
         else:
             return video_path
     
@@ -495,65 +472,90 @@ class MuxSettingTab(QWidget):
         args = ['-o', output_path]
         
         selected_audio = self.get_selected_audio_tracks()
-        if selected_audio and video_index in selected_audio and selected_audio[video_index]:
-            tracks_str = ','.join(str(t) for t in selected_audio[video_index])
-            args.extend(['--audio-tracks', tracks_str])
-        elif not self.keep_audio_check.isChecked():
-            args.append('--no-audio')
+        if video_index in selected_audio:
+            if selected_audio[video_index]:
+                tracks_str = ','.join(str(t) for t in selected_audio[video_index])
+                args.extend(['--audio-tracks', tracks_str])
+            else:
+                args.append('--no-audio')
+        else:
+            video_audios = GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO[video_index] if video_index < len(GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO) else []
+            if video_audios:
+                tracks_str = ','.join(str(track.get('id', i)) for i, track in enumerate(video_audios))
+                args.extend(['--audio-tracks', tracks_str])
         
         selected_subtitle = self.get_selected_subtitle_tracks()
         sub_list = GlobalSetting.SUBTITLE_FILES_ABSOLUTE_PATH_LIST.get(video_index, [])
+        if video_index in selected_subtitle:
+            if selected_subtitle[video_index]:
+                tracks_str = ','.join(str(t) for t in selected_subtitle[video_index])
+                args.extend(['--subtitle-tracks', tracks_str])
+            else:
+                args.append('--no-subtitles')
+        else:
+            video_subs = GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO[video_index] if video_index < len(GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO) else []
+            if video_subs:
+                tracks_str = ','.join(str(track.get('id', i)) for i, track in enumerate(video_subs))
+                args.extend(['--subtitle-tracks', tracks_str])
         
-        if selected_subtitle and video_index in selected_subtitle and selected_subtitle[video_index]:
-            tracks_str = ','.join(str(t) for t in selected_subtitle[video_index])
-            args.extend(['--subtitle-tracks', tracks_str])
-        elif not self.keep_subtitle_check.isChecked() and not sub_list:
-            args.append('--no-subtitles')
-        
-        video_subs_count = 0
+        video_subs_info = []
         if video_index < len(GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO):
-            video_subs_count = len(GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO[video_index])
+            video_subs_info = GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO[video_index] or []
         
-        video_audios_count = 0
+        video_audios_info = []
         if video_index < len(GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO):
-            video_audios_count = len(GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO[video_index])
+            video_audios_info = GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO[video_index] or []
         
-        sub_track = self.default_subtitle_combo.currentIndex()
-        first_video_subs = len(GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO[0]) if GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO else 0
+        default_sub_info = self.track_selections.get('default_subtitle', {}).get(video_index, {})
+        default_sub_idx = default_sub_info.get('idx', -1) if isinstance(default_sub_info, dict) else -1
+        default_sub_external = default_sub_info.get('external', False) if isinstance(default_sub_info, dict) else False
         
-        audio_track = self.default_audio_combo.currentIndex()
-        first_video_audios = len(GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO[0]) if GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO else 0
+        sub_languages = self.track_selections.get('subtitle_languages', {}).get(video_index, {})
         
-        for i in range(video_subs_count):
-            if sub_track >= 0 and sub_track < first_video_subs:
-                if i == sub_track:
-                    args.extend(['--default-track', f'{i}:yes'])
-                else:
-                    args.extend(['--default-track', f'{i}:no'])
-            elif sub_track >= first_video_subs:
-                args.extend(['--default-track', f'{i}:no'])
+        for i, track in enumerate(video_subs_info):
+            track_id = track.get('id', i)
+            new_lang = sub_languages.get(i)
+            if new_lang:
+                args.extend(['--language', f'{track_id}:{new_lang}'])
+            if not default_sub_external and i == default_sub_idx:
+                args.extend(['--default-track', f'{track_id}:yes'])
+            else:
+                args.extend(['--default-track', f'{track_id}:no'])
         
-        for i in range(video_audios_count):
-            if audio_track >= 0 and audio_track < first_video_audios:
-                if i == audio_track:
-                    args.extend(['--default-track', f'{i}:yes'])
-                else:
-                    args.extend(['--default-track', f'{i}:no'])
-            elif audio_track >= first_video_audios:
-                args.extend(['--default-track', f'{i}:no'])
+        default_audio_info = self.track_selections.get('default_audio', {}).get(video_index, {})
+        default_audio_idx = default_audio_info.get('idx', -1) if isinstance(default_audio_info, dict) else -1
+        default_audio_external = default_audio_info.get('external', False) if isinstance(default_audio_info, dict) else False
+        
+        audio_languages = self.track_selections.get('audio_languages', {}).get(video_index, {})
+        
+        for i, track in enumerate(video_audios_info):
+            track_id = track.get('id', i)
+            new_lang = audio_languages.get(i)
+            if new_lang:
+                args.extend(['--language', f'{track_id}:{new_lang}'])
+            if not default_audio_external and i == default_audio_idx:
+                args.extend(['--default-track', f'{track_id}:yes'])
+            else:
+                args.extend(['--default-track', f'{track_id}:no'])
+        
+        attachment_list = GlobalSetting.ATTACHMENT_FILES_ABSOLUTE_PATH_LIST.get(video_index, [])
+        if attachment_list:
+            for attachment_path in attachment_list:
+                if os.path.exists(attachment_path):
+                    ext = os.path.splitext(attachment_path)[1].lower()
+                    mime_type = self.get_attachment_mime_type(ext)
+                    args.extend(['--attachment-name', 'cover' + ext])
+                    args.extend(['--attachment-mime-type', mime_type])
+                    args.extend(['--attach-file', attachment_path])
         
         args.append(video_path)
         
         if sub_list:
             for i, sub_path in enumerate(sub_list):
-                lang = GlobalSetting.SUBTITLE_LANGUAGE.get(video_index, 'chi')
-                args.extend(['--language', f'0:{lang}'])
-                if sub_track >= first_video_subs:
-                    external_sub_index = sub_track - first_video_subs
-                    if i == external_sub_index:
-                        args.extend(['--default-track', '0:yes'])
-                    else:
-                        args.extend(['--default-track', '0:no'])
+                ext_lang = sub_languages.get(f'ext_{i}', 'chi')
+                args.extend(['--language', f'0:{ext_lang}'])
+                if default_sub_external and f'ext_{i}' == default_sub_idx:
+                    args.extend(['--default-track', '0:yes'])
                 else:
                     args.extend(['--default-track', '0:no'])
                 args.append(sub_path)
@@ -561,19 +563,30 @@ class MuxSettingTab(QWidget):
         audio_list = GlobalSetting.AUDIO_FILES_ABSOLUTE_PATH_LIST.get(video_index, [])
         if audio_list:
             for i, audio_path in enumerate(audio_list):
-                lang = GlobalSetting.AUDIO_LANGUAGE.get(video_index, 'chi')
-                args.extend(['--language', f'0:{lang}'])
-                if audio_track >= first_video_audios:
-                    external_audio_index = audio_track - first_video_audios
-                    if i == external_audio_index:
-                        args.extend(['--default-track', '0:yes'])
-                    else:
-                        args.extend(['--default-track', '0:no'])
+                ext_lang = audio_languages.get(f'ext_{i}', 'chi')
+                args.extend(['--language', f'0:{ext_lang}'])
+                if default_audio_external and f'ext_{i}' == default_audio_idx:
+                    args.extend(['--default-track', '0:yes'])
                 else:
                     args.extend(['--default-track', '0:no'])
                 args.append(audio_path)
         
         return args
+    
+    def get_attachment_mime_type(self, ext):
+        mime_types = {
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.gif': 'image/gif',
+            '.bmp': 'image/bmp',
+            '.webp': 'image/webp',
+            '.ttf': 'font/ttf',
+            '.otf': 'font/otf',
+            '.woff': 'font/woff',
+            '.woff2': 'font/woff2',
+        }
+        return mime_types.get(ext, 'application/octet-stream')
     
     def update_theme_mode_state(self):
         pass

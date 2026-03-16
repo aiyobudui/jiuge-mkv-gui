@@ -17,7 +17,7 @@ class MainWindow(MyMainWindow):
         super().__init__(args=args, parent=parent)
         self.resize(1160, 635)
         self.setWindowTitle("MKV 批量混流工具 v1.0.0")
-        self.setWindowIcon(GlobalIcons.AppIcon)
+        self.setWindowIcon(GlobalIcons.AppIcon.get())
         
         Options.load()
         
@@ -152,14 +152,15 @@ class MainWindow(MyMainWindow):
     def closeEvent(self, event):
         muxing_on = GlobalSetting.MUXING_ON
         if muxing_on:
-            result = QMessageBox.question(
-                self,
-                "确认退出",
-                "正在混流中，确定要退出吗？",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
-            )
-            if result == QMessageBox.Yes:
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("确认退出")
+            msg_box.setText("正在混流中，确定要退出吗？")
+            msg_box.setIcon(QMessageBox.Question)
+            yes_btn = msg_box.addButton("是", QMessageBox.YesRole)
+            no_btn = msg_box.addButton("否", QMessageBox.NoRole)
+            msg_box.setDefaultButton(no_btn)
+            msg_box.exec()
+            if msg_box.clickedButton() == yes_btn:
                 super().closeEvent(event)
             else:
                 event.ignore()
@@ -167,14 +168,15 @@ class MainWindow(MyMainWindow):
         
         option_selected = len(GlobalSetting.VIDEO_FILES_LIST) > 0 and not GlobalSetting.JOB_QUEUE_FINISHED
         if option_selected:
-            result = QMessageBox.question(
-                self,
-                "确认退出",
-                "有未完成的任务，确定要退出吗？",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
-            )
-            if result == QMessageBox.Yes:
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("确认退出")
+            msg_box.setText("有未完成的任务，确定要退出吗？")
+            msg_box.setIcon(QMessageBox.Question)
+            yes_btn = msg_box.addButton("是", QMessageBox.YesRole)
+            no_btn = msg_box.addButton("否", QMessageBox.NoRole)
+            msg_box.setDefaultButton(no_btn)
+            msg_box.exec()
+            if msg_box.clickedButton() == yes_btn:
                 super().closeEvent(event)
             else:
                 event.ignore()

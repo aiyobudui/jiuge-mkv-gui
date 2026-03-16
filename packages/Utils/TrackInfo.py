@@ -2,6 +2,7 @@
 import subprocess
 import json
 import os
+import sys
 
 
 def get_video_tracks_info(video_path, mkvmerge_path=None):
@@ -19,12 +20,16 @@ def get_video_tracks_info(video_path, mkvmerge_path=None):
         return None
     
     try:
+        env = os.environ.copy()
+        env['PYTHONIOENCODING'] = 'utf-8'
+        
         result = subprocess.run(
             [mkvmerge_path, '-J', video_path],
             capture_output=True,
             encoding='utf-8',
-            errors='ignore',
-            creationflags=subprocess.CREATE_NO_WINDOW
+            errors='replace',
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0,
+            env=env
         )
         
         if result.returncode == 0:

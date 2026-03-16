@@ -151,6 +151,9 @@ class AttachmentSelectionSetting(QWidget):
             row = self.attachment_table.rowCount()
             self.attachment_table.insertRow(row)
             self.attachment_table.setItem(row, 0, QTableWidgetItem(file_name))
+        
+        if files:
+            self.apply_attachment_to_all_videos(files[0])
     
     def refresh_video_list(self):
         self.video_table.setRowCount(0)
@@ -208,6 +211,25 @@ class AttachmentSelectionSetting(QWidget):
         
         file_name = selected[0].text()
         self.attachment_name_edit.setText(file_name)
+    
+    def apply_attachment_to_all_videos(self, attachment_file):
+        folder = self.source_path_edit.text()
+        attachment_path = os.path.join(folder, attachment_file)
+        
+        if not os.path.exists(attachment_path):
+            return
+        
+        if not hasattr(GlobalSetting, 'ATTACHMENT_FILES_ABSOLUTE_PATH_LIST'):
+            GlobalSetting.ATTACHMENT_FILES_ABSOLUTE_PATH_LIST = {}
+        
+        video_count = len(GlobalSetting.VIDEO_FILES_LIST) if hasattr(GlobalSetting, 'VIDEO_FILES_LIST') else 0
+        for video_idx in range(video_count):
+            if video_idx not in GlobalSetting.ATTACHMENT_FILES_ABSOLUTE_PATH_LIST:
+                GlobalSetting.ATTACHMENT_FILES_ABSOLUTE_PATH_LIST[video_idx] = []
+            if attachment_path not in GlobalSetting.ATTACHMENT_FILES_ABSOLUTE_PATH_LIST[video_idx]:
+                GlobalSetting.ATTACHMENT_FILES_ABSOLUTE_PATH_LIST[video_idx].append(attachment_path)
+        
+        GlobalSetting.ATTACHMENT_ENABLED = True
     
     def update_theme_mode_state(self):
         pass

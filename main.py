@@ -37,7 +37,7 @@ def create_application():
     global app
     app = QApplication(sys.argv)
     if GlobalIcons.AppIcon:
-        app.setWindowIcon(GlobalIcons.AppIcon)
+        app.setWindowIcon(GlobalIcons.AppIcon.get())
 
 
 def create_window():
