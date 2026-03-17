@@ -69,7 +69,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [Step 8/9] Copying additional files...
+echo [Step 7/8] Copying additional files...
 if not exist "dist\jiuge-mkv-gui\Resources\Icons" mkdir "dist\jiuge-mkv-gui\Resources\Icons"
 xcopy /Y /Q "Resources\Icons\*.*" "dist\jiuge-mkv-gui\Resources\Icons\"
 echo     Done!

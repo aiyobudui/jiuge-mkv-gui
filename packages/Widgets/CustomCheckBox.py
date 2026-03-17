@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from PySide6.QtWidgets import QCheckBox
-from PySide6.QtCore import Qt, QRect
-from PySide6.QtGui import QPainter, QPen, QBrush, QColor
+from PySide6.QtCore import Qt, QRect, QPointF
+from PySide6.QtGui import QPainter, QPen, QBrush, QColor, QPolygonF
 
 
 class CustomCheckBox(QCheckBox):
@@ -41,12 +41,8 @@ class CustomCheckBox(QCheckBox):
                 (check_rect.right(), check_rect.top())
             ]
             
-            from PySide6.QtCore import QLineF
-            from PySide6.QtGui import QPolygonF
-            
             polygon = QPolygonF()
             for x, y in points:
-                from PySide6.QtCore import QPointF
                 polygon.append(QPointF(x, y))
             
             painter.drawPolyline(polygon)

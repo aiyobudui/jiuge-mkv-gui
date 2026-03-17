@@ -6,7 +6,6 @@ from PySide6.QtWidgets import (
     QTreeWidget, QTreeWidgetItem, QHeaderView, QCheckBox, QDialogButtonBox,
     QComboBox, QWidget
 )
-from PySide6.QtGui import QStandardItemModel, QStandardItem
 from packages.Tabs.GlobalSetting import GlobalSetting
 
 

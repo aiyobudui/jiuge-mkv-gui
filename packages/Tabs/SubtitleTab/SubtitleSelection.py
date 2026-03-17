@@ -1,17 +1,17 @@
 # -*- coding: utf-8 -*-
 import os
 from PySide6.QtCore import Signal, Qt
+from PySide6.QtGui import QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, 
-    QPushButton, QComboBox, QTableWidget, QTableWidgetItem,
-    QHeaderView, QFileDialog, QGroupBox, QMessageBox
+    QPushButton, QTableWidget, QTableWidgetItem,
+    QHeaderView, QFileDialog, QGroupBox, QMessageBox, QFrame
 )
 
 from packages.Startup import GlobalIcons
 from packages.Startup.Options import Options
 from packages.Tabs.GlobalSetting import GlobalSetting
 from packages.Startup.PreDefined import SUBTITLE_EXTENSIONS
-from packages.Utils.TrackInfo import get_subtitle_tracks
 
 
 class SubtitleSelectionSetting(QWidget):
@@ -20,9 +20,84 @@ class SubtitleSelectionSetting(QWidget):
     
     def __init__(self):
         super().__init__()
+        self.setAcceptDrops(True)
         self.subtitle_files = []
+        self.current_selected_row = -1
+        self.last_click_pos = None
         self.setup_ui()
         self.connect_signals()
+    
+    def dragEnterEvent(self, event: QDragEnterEvent):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+    
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+    
+    def dropEvent(self, event: QDropEvent):
+        urls = event.mimeData().urls()
+        if not urls:
+            return
+        
+        subtitle_files = []
+        folders = []
+        non_subtitle_files = []
+        
+        for url in urls:
+            path = url.toLocalFile()
+            if os.path.isfile(path):
+                ext = os.path.splitext(path)[1].lower()
+                if ext in SUBTITLE_EXTENSIONS:
+                    subtitle_files.append(path)
+                else:
+                    non_subtitle_files.append(path)
+            elif os.path.isdir(path):
+                folders.append(path)
+        
+        if non_subtitle_files and not subtitle_files and not folders:
+            QMessageBox.warning(self, "提示", "支持的字幕格式：\n.srt .ass .ssa .sub .sup .idx .vtt")
+            event.ignore()
+            return
+        
+        if folders:
+            folder = folders[0]
+            self.source_path_edit.setText(folder)
+            self.load_subtitles()
+        elif subtitle_files:
+            existing_files = set(self.subtitle_files)
+            new_files = [sf for sf in subtitle_files if sf not in existing_files]
+            
+            if new_files:
+                total_count = len(self.subtitle_files) + len(new_files)
+                
+                if total_count == 1:
+                    self.source_path_edit.setText(os.path.dirname(new_files[0]))
+                else:
+                    self.source_path_edit.clear()
+                
+                self.load_subtitle_files_append(new_files)
+        
+        event.acceptProposedAction()
+    
+    def load_subtitle_files_append(self, file_paths):
+        file_paths.sort()
+        
+        for file_path in file_paths:
+            self.subtitle_files.append(file_path)
+            
+            row = self.subtitle_table.rowCount()
+            self.subtitle_table.insertRow(row)
+            idx_item = QTableWidgetItem(str(row + 1))
+            idx_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.subtitle_table.setItem(row, 0, idx_item)
+            self.subtitle_table.setItem(row, 1, QTableWidgetItem(os.path.basename(file_path)))
+        
+        self.auto_match_by_index()
     
     def setup_ui(self):
         main_layout = QVBoxLayout()
@@ -32,7 +107,7 @@ class SubtitleSelectionSetting(QWidget):
         source_layout = QVBoxLayout()
         
         path_layout = QHBoxLayout()
-        path_layout.addWidget(QLabel("字幕源文件夹："))
+        path_layout.addWidget(QLabel("字幕源："))
         self.source_path_edit = QLineEdit()
         self.source_path_edit.setReadOnly(True)
         self.source_path_edit.setPlaceholderText("选择包含字幕文件的文件夹")
@@ -64,9 +139,10 @@ class SubtitleSelectionSetting(QWidget):
         self.video_table = QTableWidget()
         self.video_table.setColumnCount(2)
         self.video_table.setHorizontalHeaderLabels(["序号", "视频文件"])
+        self.video_table.verticalHeader().setVisible(False)
         self.video_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
         self.video_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.video_table.setColumnWidth(0, 50)
+        self.video_table.setColumnWidth(0, 40)
         self.video_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.video_table.setEditTriggers(QTableWidget.NoEditTriggers)
         video_layout.addWidget(self.video_table)
@@ -76,15 +152,60 @@ class SubtitleSelectionSetting(QWidget):
         subtitle_layout = QVBoxLayout()
         subtitle_layout.setContentsMargins(0, 0, 0, 0)
         subtitle_layout.addWidget(QLabel("字幕列表"))
+        
         self.subtitle_table = QTableWidget()
         self.subtitle_table.setColumnCount(2)
         self.subtitle_table.setHorizontalHeaderLabels(["序号", "字幕文件"])
+        self.subtitle_table.verticalHeader().setVisible(False)
         self.subtitle_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
         self.subtitle_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.subtitle_table.setColumnWidth(0, 50)
+        self.subtitle_table.setColumnWidth(0, 40)
         self.subtitle_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.subtitle_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.subtitle_table.itemClicked.connect(self.on_subtitle_clicked)
         subtitle_layout.addWidget(self.subtitle_table)
+        
+        self.floating_btn_frame = QFrame(self.subtitle_table)
+        self.floating_btn_frame.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool)
+        self.floating_btn_frame.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+        self.floating_btn_frame.setStyleSheet("""
+            QFrame {
+                background-color: #f0f0f0;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+            }
+            QPushButton {
+                background-color: #ffffff;
+                border: 1px solid #ccc;
+                border-radius: 3px;
+                padding: 2px 8px;
+                min-width: 30px;
+            }
+            QPushButton:hover {
+                background-color: #e0e0e0;
+            }
+            QPushButton:pressed {
+                background-color: #d0d0d0;
+            }
+        """)
+        
+        floating_layout = QHBoxLayout(self.floating_btn_frame)
+        floating_layout.setContentsMargins(4, 2, 4, 2)
+        floating_layout.setSpacing(4)
+        
+        self.up_btn = QPushButton("↑上移")
+        self.up_btn.setFixedHeight(24)
+        self.up_btn.clicked.connect(self.move_subtitle_up)
+        
+        self.down_btn = QPushButton("↓下移")
+        self.down_btn.setFixedHeight(24)
+        self.down_btn.clicked.connect(self.move_subtitle_down)
+        
+        floating_layout.addWidget(self.up_btn)
+        floating_layout.addWidget(self.down_btn)
+        
+        self.floating_btn_frame.hide()
+        
         subtitle_table_widget.setLayout(subtitle_layout)
         
         match_layout.addWidget(video_table_widget, 1)
@@ -104,6 +225,74 @@ class SubtitleSelectionSetting(QWidget):
         self.clear_button.clicked.connect(self.clear_files)
         self.refresh_button.clicked.connect(self.refresh_files)
     
+    def on_subtitle_clicked(self, item):
+        row = item.row()
+        self.current_selected_row = row
+        self.last_click_pos = self.subtitle_table.cursor().pos()
+        self.show_floating_buttons(row, self.last_click_pos)
+    
+    def show_floating_buttons(self, row, global_pos=None):
+        if row < 0 or row >= self.subtitle_table.rowCount():
+            self.floating_btn_frame.hide()
+            return
+        
+        if global_pos:
+            x = global_pos.x() - self.floating_btn_frame.sizeHint().width() - 10
+            y = global_pos.y() - self.floating_btn_frame.sizeHint().height() // 2
+        elif hasattr(self, 'last_click_pos') and self.last_click_pos:
+            x = self.last_click_pos.x() - self.floating_btn_frame.sizeHint().width() - 10
+            y = self.last_click_pos.y() - self.floating_btn_frame.sizeHint().height() // 2
+        else:
+            rect = self.subtitle_table.visualItemRect(self.subtitle_table.item(row, 1))
+            table_pos = self.subtitle_table.mapToGlobal(rect.topRight())
+            x = table_pos.x() - self.floating_btn_frame.sizeHint().width() - 5
+            y = table_pos.y() + (rect.height() - self.floating_btn_frame.sizeHint().height()) // 2
+        
+        self.floating_btn_frame.move(x, y)
+        self.floating_btn_frame.show()
+        self.floating_btn_frame.raise_()
+        
+        self.up_btn.setEnabled(row > 0)
+        self.down_btn.setEnabled(row < self.subtitle_table.rowCount() - 1)
+    
+    def move_subtitle_up(self):
+        row = self.current_selected_row
+        if row <= 0:
+            return
+        
+        self.subtitle_files[row], self.subtitle_files[row - 1] = \
+            self.subtitle_files[row - 1], self.subtitle_files[row]
+        
+        self.refresh_subtitle_table()
+        self.current_selected_row = row - 1
+        self.subtitle_table.selectRow(self.current_selected_row)
+        self.show_floating_buttons(self.current_selected_row, self.last_click_pos)
+        self.auto_match_by_index()
+    
+    def move_subtitle_down(self):
+        row = self.current_selected_row
+        if row < 0 or row >= len(self.subtitle_files) - 1:
+            return
+        
+        self.subtitle_files[row], self.subtitle_files[row + 1] = \
+            self.subtitle_files[row + 1], self.subtitle_files[row]
+        
+        self.refresh_subtitle_table()
+        self.current_selected_row = row + 1
+        self.subtitle_table.selectRow(self.current_selected_row)
+        self.show_floating_buttons(self.current_selected_row, self.last_click_pos)
+        self.auto_match_by_index()
+    
+    def refresh_subtitle_table(self):
+        self.subtitle_table.setRowCount(0)
+        for idx, file_path in enumerate(self.subtitle_files, 1):
+            row = self.subtitle_table.rowCount()
+            self.subtitle_table.insertRow(row)
+            idx_item = QTableWidgetItem(str(idx))
+            idx_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.subtitle_table.setItem(row, 0, idx_item)
+            self.subtitle_table.setItem(row, 1, QTableWidgetItem(os.path.basename(file_path)))
+    
     def browse_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "选择字幕源文件夹")
         if folder:
@@ -114,6 +303,8 @@ class SubtitleSelectionSetting(QWidget):
         self.source_path_edit.clear()
         self.subtitle_table.setRowCount(0)
         self.subtitle_files = []
+        self.current_selected_row = -1
+        self.floating_btn_frame.hide()
         GlobalSetting.SUBTITLE_FILES_ABSOLUTE_PATH_LIST.clear()
         GlobalSetting.SUBTITLE_LANGUAGE.clear()
     
@@ -128,6 +319,8 @@ class SubtitleSelectionSetting(QWidget):
         
         self.subtitle_table.setRowCount(0)
         self.subtitle_files = []
+        self.current_selected_row = -1
+        self.floating_btn_frame.hide()
         
         files = []
         for f in os.listdir(folder):
@@ -143,7 +336,9 @@ class SubtitleSelectionSetting(QWidget):
             
             row = self.subtitle_table.rowCount()
             self.subtitle_table.insertRow(row)
-            self.subtitle_table.setItem(row, 0, QTableWidgetItem(str(idx)))
+            idx_item = QTableWidgetItem(str(idx))
+            idx_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.subtitle_table.setItem(row, 0, idx_item)
             self.subtitle_table.setItem(row, 1, QTableWidgetItem(file_name))
         
         self.auto_match_by_index()
@@ -152,26 +347,28 @@ class SubtitleSelectionSetting(QWidget):
         GlobalSetting.SUBTITLE_FILES_ABSOLUTE_PATH_LIST.clear()
         GlobalSetting.SUBTITLE_LANGUAGE.clear()
         
-        for video_idx in range(len(GlobalSetting.VIDEO_FILES_LIST)):
-            sub_idx = video_idx
-            
-            if sub_idx < len(self.subtitle_files):
-                sub_path = self.subtitle_files[sub_idx]
+        for display_idx, video_idx in enumerate(GlobalSetting.VIDEO_SELECTED_INDICES):
+            if display_idx < len(self.subtitle_files):
+                sub_path = self.subtitle_files[display_idx]
                 GlobalSetting.SUBTITLE_FILES_ABSOLUTE_PATH_LIST[video_idx] = [sub_path]
                 GlobalSetting.SUBTITLE_LANGUAGE[video_idx] = 'chi'
-    
-    def refresh_video_list(self):
-        self.video_table.setRowCount(0)
-        for idx, video_name in enumerate(GlobalSetting.VIDEO_FILES_LIST, 1):
-            row = self.video_table.rowCount()
-            self.video_table.insertRow(row)
-            self.video_table.setItem(row, 0, QTableWidgetItem(str(idx)))
-            self.video_table.setItem(row, 1, QTableWidgetItem(video_name))
-        
-        self.auto_match_by_index()
     
     def update_theme_mode_state(self):
         pass
     
     def set_preset_options(self):
         self.refresh_video_list()
+    
+    def refresh_video_list(self):
+        self.video_table.setRowCount(0)
+        for idx, video_idx in enumerate(GlobalSetting.VIDEO_SELECTED_INDICES, 1):
+            if video_idx < len(GlobalSetting.VIDEO_FILES_LIST):
+                video_name = GlobalSetting.VIDEO_FILES_LIST[video_idx]
+                row = self.video_table.rowCount()
+                self.video_table.insertRow(row)
+                idx_item = QTableWidgetItem(str(idx))
+                idx_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self.video_table.setItem(row, 0, idx_item)
+                self.video_table.setItem(row, 1, QTableWidgetItem(video_name))
+        
+        self.auto_match_by_index()

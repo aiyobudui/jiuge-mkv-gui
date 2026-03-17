@@ -1,17 +1,17 @@
 # -*- coding: utf-8 -*-
 import os
 from PySide6.QtCore import Signal, Qt
+from PySide6.QtGui import QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, 
-    QPushButton, QComboBox, QTableWidget, QTableWidgetItem,
-    QHeaderView, QFileDialog, QGroupBox, QMessageBox
+    QPushButton, QTableWidget, QTableWidgetItem,
+    QHeaderView, QFileDialog, QGroupBox, QMessageBox, QFrame
 )
 
 from packages.Startup import GlobalIcons
 from packages.Startup.Options import Options
 from packages.Tabs.GlobalSetting import GlobalSetting
 from packages.Startup.PreDefined import AUDIO_EXTENSIONS
-from packages.Utils.TrackInfo import get_audio_tracks
 
 
 class AudioSelectionSetting(QWidget):
@@ -20,9 +20,84 @@ class AudioSelectionSetting(QWidget):
     
     def __init__(self):
         super().__init__()
+        self.setAcceptDrops(True)
         self.audio_files = []
+        self.current_selected_row = -1
+        self.last_click_pos = None
         self.setup_ui()
         self.connect_signals()
+    
+    def dragEnterEvent(self, event: QDragEnterEvent):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+    
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+    
+    def dropEvent(self, event: QDropEvent):
+        urls = event.mimeData().urls()
+        if not urls:
+            return
+        
+        audio_files = []
+        folders = []
+        non_audio_files = []
+        
+        for url in urls:
+            path = url.toLocalFile()
+            if os.path.isfile(path):
+                ext = os.path.splitext(path)[1].lower()
+                if ext in AUDIO_EXTENSIONS:
+                    audio_files.append(path)
+                else:
+                    non_audio_files.append(path)
+            elif os.path.isdir(path):
+                folders.append(path)
+        
+        if non_audio_files and not audio_files and not folders:
+            QMessageBox.warning(self, "提示", "支持的音轨格式：\n.aac .ac3 .flac .eac3 .mka .m4a .mp3 .dts .dtsma .thd .wav .ogg .opus")
+            event.ignore()
+            return
+        
+        if folders:
+            folder = folders[0]
+            self.source_path_edit.setText(folder)
+            self.load_audios()
+        elif audio_files:
+            existing_files = set(self.audio_files)
+            new_files = [af for af in audio_files if af not in existing_files]
+            
+            if new_files:
+                total_count = len(self.audio_files) + len(new_files)
+                
+                if total_count == 1:
+                    self.source_path_edit.setText(os.path.dirname(new_files[0]))
+                else:
+                    self.source_path_edit.clear()
+                
+                self.load_audio_files_append(new_files)
+        
+        event.acceptProposedAction()
+    
+    def load_audio_files_append(self, file_paths):
+        file_paths.sort()
+        
+        for file_path in file_paths:
+            self.audio_files.append(file_path)
+            
+            row = self.audio_table.rowCount()
+            self.audio_table.insertRow(row)
+            idx_item = QTableWidgetItem(str(row + 1))
+            idx_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.audio_table.setItem(row, 0, idx_item)
+            self.audio_table.setItem(row, 1, QTableWidgetItem(os.path.basename(file_path)))
+        
+        self.auto_match_by_index()
     
     def setup_ui(self):
         main_layout = QVBoxLayout()
@@ -32,7 +107,7 @@ class AudioSelectionSetting(QWidget):
         source_layout = QVBoxLayout()
         
         path_layout = QHBoxLayout()
-        path_layout.addWidget(QLabel("音轨源文件夹："))
+        path_layout.addWidget(QLabel("音轨源："))
         self.source_path_edit = QLineEdit()
         self.source_path_edit.setReadOnly(True)
         self.source_path_edit.setPlaceholderText("选择包含音轨文件的文件夹")
@@ -64,9 +139,10 @@ class AudioSelectionSetting(QWidget):
         self.video_table = QTableWidget()
         self.video_table.setColumnCount(2)
         self.video_table.setHorizontalHeaderLabels(["序号", "视频文件"])
+        self.video_table.verticalHeader().setVisible(False)
         self.video_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
         self.video_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.video_table.setColumnWidth(0, 50)
+        self.video_table.setColumnWidth(0, 40)
         self.video_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.video_table.setEditTriggers(QTableWidget.NoEditTriggers)
         video_layout.addWidget(self.video_table)
@@ -76,15 +152,60 @@ class AudioSelectionSetting(QWidget):
         audio_layout = QVBoxLayout()
         audio_layout.setContentsMargins(0, 0, 0, 0)
         audio_layout.addWidget(QLabel("音轨列表"))
+        
         self.audio_table = QTableWidget()
         self.audio_table.setColumnCount(2)
         self.audio_table.setHorizontalHeaderLabels(["序号", "音轨文件"])
+        self.audio_table.verticalHeader().setVisible(False)
         self.audio_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
         self.audio_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.audio_table.setColumnWidth(0, 50)
+        self.audio_table.setColumnWidth(0, 40)
         self.audio_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.audio_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.audio_table.itemClicked.connect(self.on_audio_clicked)
         audio_layout.addWidget(self.audio_table)
+        
+        self.floating_btn_frame = QFrame(self.audio_table)
+        self.floating_btn_frame.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool)
+        self.floating_btn_frame.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+        self.floating_btn_frame.setStyleSheet("""
+            QFrame {
+                background-color: #f0f0f0;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+            }
+            QPushButton {
+                background-color: #ffffff;
+                border: 1px solid #ccc;
+                border-radius: 3px;
+                padding: 2px 8px;
+                min-width: 30px;
+            }
+            QPushButton:hover {
+                background-color: #e0e0e0;
+            }
+            QPushButton:pressed {
+                background-color: #d0d0d0;
+            }
+        """)
+        
+        floating_layout = QHBoxLayout(self.floating_btn_frame)
+        floating_layout.setContentsMargins(4, 2, 4, 2)
+        floating_layout.setSpacing(4)
+        
+        self.up_btn = QPushButton("↑上移")
+        self.up_btn.setFixedHeight(24)
+        self.up_btn.clicked.connect(self.move_audio_up)
+        
+        self.down_btn = QPushButton("↓下移")
+        self.down_btn.setFixedHeight(24)
+        self.down_btn.clicked.connect(self.move_audio_down)
+        
+        floating_layout.addWidget(self.up_btn)
+        floating_layout.addWidget(self.down_btn)
+        
+        self.floating_btn_frame.hide()
+        
         audio_table_widget.setLayout(audio_layout)
         
         match_layout.addWidget(video_table_widget, 1)
@@ -104,6 +225,74 @@ class AudioSelectionSetting(QWidget):
         self.clear_button.clicked.connect(self.clear_files)
         self.refresh_button.clicked.connect(self.refresh_files)
     
+    def on_audio_clicked(self, item):
+        row = item.row()
+        self.current_selected_row = row
+        self.last_click_pos = self.audio_table.cursor().pos()
+        self.show_floating_buttons(row, self.last_click_pos)
+    
+    def show_floating_buttons(self, row, global_pos=None):
+        if row < 0 or row >= self.audio_table.rowCount():
+            self.floating_btn_frame.hide()
+            return
+        
+        if global_pos:
+            x = global_pos.x() - self.floating_btn_frame.sizeHint().width() - 10
+            y = global_pos.y() - self.floating_btn_frame.sizeHint().height() // 2
+        elif hasattr(self, 'last_click_pos') and self.last_click_pos:
+            x = self.last_click_pos.x() - self.floating_btn_frame.sizeHint().width() - 10
+            y = self.last_click_pos.y() - self.floating_btn_frame.sizeHint().height() // 2
+        else:
+            rect = self.audio_table.visualItemRect(self.audio_table.item(row, 1))
+            table_pos = self.audio_table.mapToGlobal(rect.topRight())
+            x = table_pos.x() - self.floating_btn_frame.sizeHint().width() - 5
+            y = table_pos.y() + (rect.height() - self.floating_btn_frame.sizeHint().height()) // 2
+        
+        self.floating_btn_frame.move(x, y)
+        self.floating_btn_frame.show()
+        self.floating_btn_frame.raise_()
+        
+        self.up_btn.setEnabled(row > 0)
+        self.down_btn.setEnabled(row < self.audio_table.rowCount() - 1)
+    
+    def move_audio_up(self):
+        row = self.current_selected_row
+        if row <= 0:
+            return
+        
+        self.audio_files[row], self.audio_files[row - 1] = \
+            self.audio_files[row - 1], self.audio_files[row]
+        
+        self.refresh_audio_table()
+        self.current_selected_row = row - 1
+        self.audio_table.selectRow(self.current_selected_row)
+        self.show_floating_buttons(self.current_selected_row, self.last_click_pos)
+        self.auto_match_by_index()
+    
+    def move_audio_down(self):
+        row = self.current_selected_row
+        if row < 0 or row >= len(self.audio_files) - 1:
+            return
+        
+        self.audio_files[row], self.audio_files[row + 1] = \
+            self.audio_files[row + 1], self.audio_files[row]
+        
+        self.refresh_audio_table()
+        self.current_selected_row = row + 1
+        self.audio_table.selectRow(self.current_selected_row)
+        self.show_floating_buttons(self.current_selected_row, self.last_click_pos)
+        self.auto_match_by_index()
+    
+    def refresh_audio_table(self):
+        self.audio_table.setRowCount(0)
+        for idx, file_path in enumerate(self.audio_files, 1):
+            row = self.audio_table.rowCount()
+            self.audio_table.insertRow(row)
+            idx_item = QTableWidgetItem(str(idx))
+            idx_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.audio_table.setItem(row, 0, idx_item)
+            self.audio_table.setItem(row, 1, QTableWidgetItem(os.path.basename(file_path)))
+    
     def browse_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "选择音轨源文件夹")
         if folder:
@@ -114,6 +303,8 @@ class AudioSelectionSetting(QWidget):
         self.source_path_edit.clear()
         self.audio_table.setRowCount(0)
         self.audio_files = []
+        self.current_selected_row = -1
+        self.floating_btn_frame.hide()
         GlobalSetting.AUDIO_FILES_ABSOLUTE_PATH_LIST.clear()
         GlobalSetting.AUDIO_LANGUAGE.clear()
     
@@ -128,6 +319,8 @@ class AudioSelectionSetting(QWidget):
         
         self.audio_table.setRowCount(0)
         self.audio_files = []
+        self.current_selected_row = -1
+        self.floating_btn_frame.hide()
         
         files = []
         for f in os.listdir(folder):
@@ -143,7 +336,9 @@ class AudioSelectionSetting(QWidget):
             
             row = self.audio_table.rowCount()
             self.audio_table.insertRow(row)
-            self.audio_table.setItem(row, 0, QTableWidgetItem(str(idx)))
+            idx_item = QTableWidgetItem(str(idx))
+            idx_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.audio_table.setItem(row, 0, idx_item)
             self.audio_table.setItem(row, 1, QTableWidgetItem(file_name))
         
         self.auto_match_by_index()
@@ -152,26 +347,28 @@ class AudioSelectionSetting(QWidget):
         GlobalSetting.AUDIO_FILES_ABSOLUTE_PATH_LIST.clear()
         GlobalSetting.AUDIO_LANGUAGE.clear()
         
-        for video_idx in range(len(GlobalSetting.VIDEO_FILES_LIST)):
-            audio_idx = video_idx
-            
-            if audio_idx < len(self.audio_files):
-                audio_path = self.audio_files[audio_idx]
+        for display_idx, video_idx in enumerate(GlobalSetting.VIDEO_SELECTED_INDICES):
+            if display_idx < len(self.audio_files):
+                audio_path = self.audio_files[display_idx]
                 GlobalSetting.AUDIO_FILES_ABSOLUTE_PATH_LIST[video_idx] = [audio_path]
                 GlobalSetting.AUDIO_LANGUAGE[video_idx] = 'chi'
-    
-    def refresh_video_list(self):
-        self.video_table.setRowCount(0)
-        for idx, video_name in enumerate(GlobalSetting.VIDEO_FILES_LIST, 1):
-            row = self.video_table.rowCount()
-            self.video_table.insertRow(row)
-            self.video_table.setItem(row, 0, QTableWidgetItem(str(idx)))
-            self.video_table.setItem(row, 1, QTableWidgetItem(video_name))
-        
-        self.auto_match_by_index()
     
     def update_theme_mode_state(self):
         pass
     
     def set_preset_options(self):
         self.refresh_video_list()
+    
+    def refresh_video_list(self):
+        self.video_table.setRowCount(0)
+        for idx, video_idx in enumerate(GlobalSetting.VIDEO_SELECTED_INDICES, 1):
+            if video_idx < len(GlobalSetting.VIDEO_FILES_LIST):
+                video_name = GlobalSetting.VIDEO_FILES_LIST[video_idx]
+                row = self.video_table.rowCount()
+                self.video_table.insertRow(row)
+                idx_item = QTableWidgetItem(str(idx))
+                idx_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self.video_table.setItem(row, 0, idx_item)
+                self.video_table.setItem(row, 1, QTableWidgetItem(video_name))
+        
+        self.auto_match_by_index()

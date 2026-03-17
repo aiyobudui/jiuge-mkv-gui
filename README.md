@@ -1,6 +1,10 @@
-# 九歌 MKV 混流工具
+# 九歌 MKV批量混流工具
 
 一个基于 Python + PySide6 开发的 MKV 视频混流工具，支持批量添加字幕、音轨、封面附件，并设置默认轨道。
+
+## 下载地址
+
+**夸克网盘**：[https://pan.quark.cn/s/280a143de78b](https://pan.quark.cn/s/280a143de78b)
 
 ## 功能特点
 

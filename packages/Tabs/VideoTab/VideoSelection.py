@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from PySide6.QtCore import Signal, Qt, QThread
+from PySide6.QtCore import Signal, Qt, QMimeData, QUrl
+from PySide6.QtGui import QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, 
     QPushButton, QTableWidget, QTableWidgetItem,
@@ -12,7 +13,7 @@ from packages.Startup import GlobalIcons
 from packages.Startup.Options import Options
 from packages.Tabs.GlobalSetting import GlobalSetting, get_readable_filesize
 from packages.Startup.PreDefined import VIDEO_EXTENSIONS
-from packages.Utils.TrackInfo import get_subtitle_tracks, get_audio_tracks, get_attachments, format_track_info
+from packages.Utils.TrackInfo import get_subtitle_tracks, get_audio_tracks, get_attachments
 from packages.Widgets.MediaInfoDialog import MediaInfoDialog
 
 
@@ -23,8 +24,181 @@ class VideoSelectionSetting(QWidget):
     
     def __init__(self):
         super().__init__()
+        self.setAcceptDrops(True)
+        self.current_source_dir = ""
         self.setup_ui()
         self.connect_signals()
+    
+    def dragEnterEvent(self, event: QDragEnterEvent):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+    
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+    
+    def dropEvent(self, event: QDropEvent):
+        urls = event.mimeData().urls()
+        if not urls:
+            return
+        
+        video_files = []
+        folders = []
+        non_video_files = []
+        
+        for url in urls:
+            path = url.toLocalFile()
+            if os.path.isfile(path):
+                ext = os.path.splitext(path)[1].lower()
+                if ext in VIDEO_EXTENSIONS:
+                    video_files.append(path)
+                else:
+                    non_video_files.append(path)
+            elif os.path.isdir(path):
+                folders.append(path)
+        
+        if non_video_files and not video_files and not folders:
+            QMessageBox.warning(self, "提示", "支持的视频格式：\n.mkv .mp4 .avi .mov .wmv .flv .webm .m2ts .ts")
+            event.ignore()
+            return
+        
+        if folders:
+            folder = folders[0]
+            self.current_source_dir = folder
+            self.source_path_edit.setText(folder)
+            self.load_videos()
+        elif video_files:
+            existing_files = set(GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST)
+            new_files = [vf for vf in video_files if vf not in existing_files]
+            
+            if new_files:
+                total_count = len(GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST) + len(new_files)
+                
+                if total_count == 1:
+                    self.current_source_dir = os.path.dirname(new_files[0])
+                    self.source_path_edit.setText(self.current_source_dir)
+                else:
+                    self.current_source_dir = ""
+                    self.source_path_edit.clear()
+                
+                self.load_video_files_append(new_files)
+        
+        event.acceptProposedAction()
+    
+    def load_video_files_append(self, file_paths):
+        file_paths.sort()
+        
+        has_mkvmerge = Options.Mkvmerge_Path and os.path.exists(Options.Mkvmerge_Path)
+        
+        for file_path in file_paths:
+            file_name = os.path.basename(file_path)
+            file_size = os.path.getsize(file_path)
+            
+            GlobalSetting.VIDEO_FILES_LIST.append(file_name)
+            GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST.append(file_path)
+            GlobalSetting.VIDEO_FILES_SIZE_LIST.append(file_size)
+            
+            row = self.video_table.rowCount()
+            self.video_table.insertRow(row)
+            
+            checkbox = QCheckBox()
+            checkbox.setChecked(True)
+            checkbox.clicked.connect(self.update_selected_indices)
+            checkbox_widget = QWidget()
+            checkbox_layout = QHBoxLayout(checkbox_widget)
+            checkbox_layout.addWidget(checkbox)
+            checkbox_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            checkbox_layout.setContentsMargins(0, 0, 0, 0)
+            self.video_table.setCellWidget(row, 0, checkbox_widget)
+            
+            self.video_table.setItem(row, 1, QTableWidgetItem(file_name))
+            
+            sub_item = QTableWidgetItem("...")
+            sub_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.video_table.setItem(row, 2, sub_item)
+            
+            audio_item = QTableWidgetItem("...")
+            audio_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.video_table.setItem(row, 3, audio_item)
+            
+            size_item = QTableWidgetItem(get_readable_filesize(file_size))
+            size_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.video_table.setItem(row, 4, size_item)
+            
+            if has_mkvmerge:
+                subtitle_tracks = get_subtitle_tracks(file_path)
+                audio_tracks = get_audio_tracks(file_path)
+                attachment_tracks = get_attachments(file_path)
+                GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO.append(subtitle_tracks)
+                GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO.append(audio_tracks)
+                GlobalSetting.VIDEO_OLD_ATTACHMENTS_INFO.append(attachment_tracks)
+                
+                sub_item = QTableWidgetItem(str(len(subtitle_tracks)))
+                sub_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self.video_table.setItem(row, 2, sub_item)
+                
+                audio_item = QTableWidgetItem(str(len(audio_tracks)))
+                audio_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self.video_table.setItem(row, 3, audio_item)
+        
+        self.video_list_updated.emit()
+    
+    def load_video_files(self, file_paths):
+        self.video_table.setRowCount(0)
+        GlobalSetting.VIDEO_FILES_LIST.clear()
+        GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST.clear()
+        GlobalSetting.VIDEO_FILES_SIZE_LIST.clear()
+        GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO.clear()
+        GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO.clear()
+        GlobalSetting.VIDEO_OLD_ATTACHMENTS_INFO.clear()
+        
+        file_paths.sort()
+        
+        has_mkvmerge = Options.Mkvmerge_Path and os.path.exists(Options.Mkvmerge_Path)
+        
+        for file_path in file_paths:
+            file_name = os.path.basename(file_path)
+            file_size = os.path.getsize(file_path)
+            
+            GlobalSetting.VIDEO_FILES_LIST.append(file_name)
+            GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST.append(file_path)
+            GlobalSetting.VIDEO_FILES_SIZE_LIST.append(file_size)
+            
+            row = self.video_table.rowCount()
+            self.video_table.insertRow(row)
+            
+            checkbox = QCheckBox()
+            checkbox.setChecked(True)
+            checkbox.clicked.connect(self.update_selected_indices)
+            checkbox_widget = QWidget()
+            checkbox_layout = QHBoxLayout(checkbox_widget)
+            checkbox_layout.addWidget(checkbox)
+            checkbox_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            checkbox_layout.setContentsMargins(0, 0, 0, 0)
+            self.video_table.setCellWidget(row, 0, checkbox_widget)
+            
+            self.video_table.setItem(row, 1, QTableWidgetItem(file_name))
+            
+            sub_item = QTableWidgetItem("...")
+            sub_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.video_table.setItem(row, 2, sub_item)
+            
+            audio_item = QTableWidgetItem("...")
+            audio_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.video_table.setItem(row, 3, audio_item)
+            
+            size_item = QTableWidgetItem(get_readable_filesize(file_size))
+            size_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.video_table.setItem(row, 4, size_item)
+        
+        if has_mkvmerge:
+            self.load_track_info_threaded()
+        
+        self.video_list_updated.emit()
     
     def refresh_track_info_now(self):
         if not Options.Mkvmerge_Path or not os.path.exists(Options.Mkvmerge_Path):
@@ -62,7 +236,7 @@ class VideoSelectionSetting(QWidget):
         source_layout = QVBoxLayout()
         
         path_layout = QHBoxLayout()
-        path_layout.addWidget(QLabel("视频源文件夹："))
+        path_layout.addWidget(QLabel("视频源："))
         self.source_path_edit = QLineEdit()
         self.source_path_edit.setReadOnly(True)
         self.source_path_edit.setPlaceholderText("选择包含视频文件的文件夹")
@@ -131,6 +305,16 @@ class VideoSelectionSetting(QWidget):
         self.media_info_button.clicked.connect(self.show_media_info)
         self.select_all_checkbox.stateChanged.connect(self.toggle_select_all)
     
+    def update_selected_indices(self):
+        GlobalSetting.VIDEO_SELECTED_INDICES.clear()
+        for row in range(self.video_table.rowCount()):
+            checkbox_widget = self.video_table.cellWidget(row, 0)
+            if checkbox_widget:
+                checkbox = checkbox_widget.findChild(QCheckBox)
+                if checkbox and checkbox.isChecked():
+                    GlobalSetting.VIDEO_SELECTED_INDICES.append(row)
+        self.video_list_updated.emit()
+    
     def toggle_select_all(self, state):
         checked = state == Qt.CheckState.Checked.value
         for row in range(self.video_table.rowCount()):
@@ -139,14 +323,17 @@ class VideoSelectionSetting(QWidget):
                 checkbox = checkbox_widget.findChild(QCheckBox)
                 if checkbox:
                     checkbox.setChecked(checked)
+        self.update_selected_indices()
     
     def browse_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "选择视频源文件夹")
         if folder:
+            self.current_source_dir = folder
             self.source_path_edit.setText(folder)
             self.load_videos()
     
     def clear_files(self):
+        self.current_source_dir = ""
         self.source_path_edit.clear()
         self.video_table.setRowCount(0)
         GlobalSetting.VIDEO_FILES_LIST.clear()
@@ -196,6 +383,7 @@ class VideoSelectionSetting(QWidget):
             
             checkbox = QCheckBox()
             checkbox.setChecked(True)
+            checkbox.clicked.connect(self.update_selected_indices)
             checkbox_widget = QWidget()
             checkbox_layout = QHBoxLayout(checkbox_widget)
             checkbox_layout.addWidget(checkbox)
@@ -220,7 +408,7 @@ class VideoSelectionSetting(QWidget):
         if has_mkvmerge:
             self.load_track_info_threaded()
         
-        self.video_list_updated.emit()
+        self.update_selected_indices()
     
     def load_track_info_threaded(self):
         def get_track_info(file_path):

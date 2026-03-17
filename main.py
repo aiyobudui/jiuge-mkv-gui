@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 import logging
-import signal
 import sys
 import os
 from traceback import format_exception

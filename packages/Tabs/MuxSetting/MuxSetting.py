@@ -8,39 +8,13 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, 
     QPushButton, QComboBox, QTableWidget, QTableWidgetItem,
     QHeaderView, QFileDialog, QGroupBox, QCheckBox,
-    QProgressBar, QMessageBox, QSpinBox, QMenu, QToolButton
+    QProgressBar, QMessageBox
 )
 
 from packages.Startup import GlobalIcons
 from packages.Startup.Options import Options
 from packages.Tabs.GlobalSetting import GlobalSetting, get_readable_filesize
 from packages.Tabs.MuxSetting.TrackSelectionDialog import TrackSelectionDialog
-
-
-class CheckableComboBox(QComboBox):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.checked_items = []
-        self.item_changed = Signal()
-    
-    def add_items_with_check(self, items):
-        self.clear()
-        self.checked_items = []
-        for i, item in enumerate(items):
-            self.addItem(item)
-            self.setItemData(i, Qt.Unchecked, Qt.CheckStateRole)
-    
-    def item_checked(self, index):
-        return self.itemData(index, Qt.CheckStateRole) == Qt.Checked
-    
-    def set_item_checked(self, index, checked):
-        self.setItemData(index, Qt.Checked if checked else Qt.Unchecked, Qt.CheckStateRole)
-    
-    def get_checked_indices(self):
-        return [i for i in range(self.count()) if self.item_checked(i)]
-    
-    def hidePopup(self):
-        pass
 
 
 class MuxSettingTab(QWidget):
@@ -329,17 +303,18 @@ class MuxSettingTab(QWidget):
         
         self.task_table.setRowCount(0)
         
-        for i in range(len(GlobalSetting.VIDEO_FILES_LIST)):
-            video_name = GlobalSetting.VIDEO_FILES_LIST[i]
-            video_size = get_readable_filesize(GlobalSetting.VIDEO_FILES_SIZE_LIST[i])
-            
-            row = self.task_table.rowCount()
-            self.task_table.insertRow(row)
-            self.task_table.setItem(row, 0, QTableWidgetItem(video_name))
-            self.task_table.setItem(row, 1, QTableWidgetItem("等待中"))
-            self.task_table.setItem(row, 2, QTableWidgetItem(video_size))
-            self.task_table.setItem(row, 3, QTableWidgetItem("0%"))
-            self.task_table.setItem(row, 4, QTableWidgetItem("-"))
+        for video_idx in GlobalSetting.VIDEO_SELECTED_INDICES:
+            if video_idx < len(GlobalSetting.VIDEO_FILES_LIST):
+                video_name = GlobalSetting.VIDEO_FILES_LIST[video_idx]
+                video_size = get_readable_filesize(GlobalSetting.VIDEO_FILES_SIZE_LIST[video_idx])
+                
+                row = self.task_table.rowCount()
+                self.task_table.insertRow(row)
+                self.task_table.setItem(row, 0, QTableWidgetItem(video_name))
+                self.task_table.setItem(row, 1, QTableWidgetItem("等待中"))
+                self.task_table.setItem(row, 2, QTableWidgetItem(video_size))
+                self.task_table.setItem(row, 3, QTableWidgetItem("0%"))
+                self.task_table.setItem(row, 4, QTableWidgetItem("-"))
         
         self.total_tasks = self.task_table.rowCount()
         self.completed_count = 0

@@ -4,7 +4,6 @@ from PySide6.QtWidgets import (
     QPushButton, QGroupBox, QScrollArea, QWidget, QFrame
 )
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
 
 
 class MediaInfoDialog(QDialog):
