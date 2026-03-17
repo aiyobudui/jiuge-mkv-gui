@@ -4,7 +4,7 @@
 
 ## 下载地址
 
-**夸克网盘**：[https://pan.quark.cn/s/280a143de78b](https://pan.quark.cn/s/280a143de78b)
+**夸克网盘**：<a href="https://pan.quark.cn/s/280a143de78b" target="_blank">https://pan.quark.cn/s/280a143de78b</a>
 
 ## 功能特点
 
