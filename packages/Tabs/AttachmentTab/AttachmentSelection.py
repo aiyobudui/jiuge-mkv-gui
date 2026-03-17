@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 import os
-from PySide6.QtCore import Signal, Qt
+from PySide6.QtCore import Signal, Qt, QTimer, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, 
     QPushButton, QComboBox, QTableWidget, QTableWidgetItem,
-    QHeaderView, QFileDialog, QGroupBox, QMessageBox, QFrame
+    QHeaderView, QFileDialog, QGroupBox, QMessageBox, QFrame, QGraphicsOpacityEffect
 )
 
 from packages.Startup import GlobalIcons
@@ -24,6 +24,10 @@ class AttachmentSelectionSetting(QWidget):
         self.attachment_files = []
         self.current_selected_row = -1
         self.last_click_pos = None
+        self.hide_timer = QTimer()
+        self.hide_timer.setSingleShot(True)
+        self.hide_timer.timeout.connect(self.start_fade_out)
+        self.fade_animation = None
         self.setup_ui()
         self.connect_signals()
     
@@ -60,7 +64,7 @@ class AttachmentSelectionSetting(QWidget):
                 folders.append(path)
         
         if non_attachment_files and not attachment_files and not folders:
-            QMessageBox.warning(self, "提示", "支持的附件格式：\n.ttf .otf .jpg .jpeg .png .gif .bmp .webp .woff .woff2")
+            QMessageBox.warning(self, "提示", "支持的附件格式：\n字体: .ttf .otf .woff\n图片: .jpg .png .webp\n文档: .xml .json .txt .pdf .md .nfo")
             event.ignore()
             return
         
@@ -145,6 +149,7 @@ class AttachmentSelectionSetting(QWidget):
         self.video_table.setColumnWidth(0, 40)
         self.video_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.video_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.video_table.itemClicked.connect(self.on_video_table_clicked)
         video_layout.addWidget(self.video_table)
         video_table_widget.setLayout(video_layout)
         
@@ -204,6 +209,9 @@ class AttachmentSelectionSetting(QWidget):
         floating_layout.addWidget(self.up_btn)
         floating_layout.addWidget(self.down_btn)
         
+        self.floating_btn_frame.enterEvent = self._on_frame_enter
+        self.floating_btn_frame.leaveEvent = self._on_frame_leave
+        
         self.floating_btn_frame.hide()
         
         attachment_table_widget.setLayout(attachment_layout)
@@ -225,13 +233,39 @@ class AttachmentSelectionSetting(QWidget):
         self.clear_button.clicked.connect(self.clear_files)
         self.refresh_button.clicked.connect(self.refresh_files)
     
+    def hideEvent(self, event):
+        self.hide_timer.stop()
+        self.floating_btn_frame.hide()
+        super().hideEvent(event)
+    
+    def mousePressEvent(self, event):
+        if self.floating_btn_frame.isVisible():
+            table_rect = self.attachment_table.rect()
+            table_rect.moveTo(self.attachment_table.mapToGlobal(table_rect.topLeft()))
+            frame_rect = self.floating_btn_frame.rect()
+            frame_rect.moveTo(self.floating_btn_frame.pos())
+            
+            click_pos = event.globalPosition().toPoint() if hasattr(event, 'globalPosition') else event.globalPos()
+            
+            if not table_rect.contains(click_pos) and not frame_rect.contains(click_pos):
+                self.hide_timer.stop()
+                self.floating_btn_frame.hide()
+        
+        super().mousePressEvent(event)
+    
     def on_attachment_clicked(self, item):
         row = item.row()
         self.current_selected_row = row
         self.last_click_pos = self.attachment_table.cursor().pos()
         self.show_floating_buttons(row, self.last_click_pos)
     
+    def on_video_table_clicked(self, item):
+        self.hide_timer.stop()
+        self.floating_btn_frame.hide()
+    
     def show_floating_buttons(self, row, global_pos=None):
+        self.hide_timer.stop()
+        
         if row < 0 or row >= self.attachment_table.rowCount():
             self.floating_btn_frame.hide()
             return
@@ -249,11 +283,35 @@ class AttachmentSelectionSetting(QWidget):
             y = table_pos.y() + (rect.height() - self.floating_btn_frame.sizeHint().height()) // 2
         
         self.floating_btn_frame.move(x, y)
+        self.floating_btn_frame.setWindowOpacity(1.0)
         self.floating_btn_frame.show()
         self.floating_btn_frame.raise_()
         
         self.up_btn.setEnabled(row > 0)
         self.down_btn.setEnabled(row < self.attachment_table.rowCount() - 1)
+        
+        self.hide_timer.start(3000)
+    
+    def start_fade_out(self):
+        if self.fade_animation:
+            self.fade_animation.stop()
+        
+        self.fade_animation = QPropertyAnimation(self.floating_btn_frame, b"windowOpacity")
+        self.fade_animation.setDuration(500)
+        self.fade_animation.setStartValue(1.0)
+        self.fade_animation.setEndValue(0.0)
+        self.fade_animation.setEasingCurve(QEasingCurve.Type.OutQuad)
+        self.fade_animation.finished.connect(self.floating_btn_frame.hide)
+        self.fade_animation.start()
+    
+    def _on_frame_enter(self, event):
+        self.hide_timer.stop()
+        if self.fade_animation:
+            self.fade_animation.stop()
+        self.floating_btn_frame.setWindowOpacity(1.0)
+    
+    def _on_frame_leave(self, event):
+        self.hide_timer.start(5000)
     
     def move_attachment_up(self):
         row = self.current_selected_row

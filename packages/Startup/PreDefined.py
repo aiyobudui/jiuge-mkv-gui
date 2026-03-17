@@ -36,5 +36,16 @@ ISO_639_2_SYMBOLS = {
 
 VIDEO_EXTENSIONS = [".mkv", ".mp4", ".avi", ".mov", ".wmv", ".m4v", ".mpeg", ".ts", ".ogg", ".ogm", ".h264", ".h265", ".webm"]
 SUBTITLE_EXTENSIONS = [".srt", ".ass", ".ssa", ".sup", ".pgs", ".mks", ".vtt"]
-AUDIO_EXTENSIONS = [".aac", ".ac3", ".flac", ".eac3", ".mka", ".m4a", ".mp3", ".dts", ".dtsma", ".thd", ".wav", ".ogg", ".opus"]
-ATTACHMENT_EXTENSIONS = [".ttf", ".otf", ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".woff", ".woff2"]
+AUDIO_EXTENSIONS = [
+    ".aac", ".ac3", ".eac3", ".mp3", ".mp2",
+    ".dts", ".dtshd", ".dtsma", ".thd", ".truehd",
+    ".flac", ".alac", ".wav", ".tta", ".wv", ".ape",
+    ".ogg", ".opus", ".mka", ".m4a", ".ra", ".rm",
+    ".amr", ".gsm", ".spx"
+]
+ATTACHMENT_EXTENSIONS = [
+    ".ttf", ".otf", ".woff",
+    ".jpg", ".jpeg", ".png", ".webp",
+    ".xml", ".json", ".txt",
+    ".pdf", ".md", ".nfo"
+]
