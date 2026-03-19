@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 import os
+import re
+import zlib
 import subprocess
 import threading
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from PySide6.QtCore import Signal, Qt
 from PySide6.QtWidgets import (
@@ -302,6 +305,7 @@ class MuxSettingTab(QWidget):
         self.update_track_menus()
         
         self.task_table.setRowCount(0)
+        self.task_video_indices = []
         
         for video_idx in GlobalSetting.VIDEO_SELECTED_INDICES:
             if video_idx < len(GlobalSetting.VIDEO_FILES_LIST):
@@ -315,6 +319,7 @@ class MuxSettingTab(QWidget):
                 self.task_table.setItem(row, 2, QTableWidgetItem(video_size))
                 self.task_table.setItem(row, 3, QTableWidgetItem("0%"))
                 self.task_table.setItem(row, 4, QTableWidgetItem("-"))
+                self.task_video_indices.append(video_idx)
         
         self.total_tasks = self.task_table.rowCount()
         self.completed_count = 0
@@ -369,29 +374,38 @@ class MuxSettingTab(QWidget):
         futures = {}
         completed = [0]
         lock = threading.Lock()
+        has_error = [False]
         
         with ThreadPoolExecutor(max_workers=thread_count) as executor:
             for i in range(total_tasks):
                 if self.stop_requested:
                     break
                 
+                if self.abort_on_error_check.isChecked() and has_error[0]:
+                    break
+                
                 video_path = GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST[i]
+                video_name = GlobalSetting.VIDEO_FILES_LIST[i]
                 output_path = self.get_output_path(video_path)
                 args = self.build_mkvmerge_args(i, video_path, output_path)
                 
-                future = executor.submit(self.process_single_task, i, args)
+                future = executor.submit(self.process_single_task, i, args, video_name)
                 futures[future] = i
             
             for future in as_completed(futures):
                 task_index = futures[future]
                 try:
-                    success, output_size = future.result()
+                    success, output_size, return_code = future.result()
                     if success:
                         self.update_task_signal.emit(task_index, "成功", "100%", output_size)
                     else:
                         self.update_task_signal.emit(task_index, "失败", "0%", "-")
+                        if self.abort_on_error_check.isChecked():
+                            has_error[0] = True
                 except Exception:
                     self.update_task_signal.emit(task_index, "失败", "0%", "-")
+                    if self.abort_on_error_check.isChecked():
+                        has_error[0] = True
                 
                 with lock:
                     completed[0] += 1
@@ -406,7 +420,7 @@ class MuxSettingTab(QWidget):
         GlobalSetting.MUXING_ON = False
         self.set_button_state(is_muxing=False)
     
-    def process_single_task(self, task_index, args):
+    def process_single_task(self, task_index, args, video_name):
         self.update_task_signal.emit(task_index, "执行中", "50%", "-")
         
         try:
@@ -422,22 +436,33 @@ class MuxSettingTab(QWidget):
                 env=env
             )
             
-            if result.returncode in [0, 1]:
-                output_path = args[1]
-                if os.path.exists(output_path):
-                    output_size = get_readable_filesize(os.path.getsize(output_path))
-                else:
-                    output_size = "-"
-                return True, output_size
+            success = result.returncode in [0, 1]
+            output_path = args[1]
+            
+            if success and os.path.exists(output_path):
+                if self.add_crc_check.isChecked():
+                    crc = self.calculate_crc32(output_path)
+                    if crc:
+                        new_path = self.add_crc_to_filename(output_path, crc)
+                        if new_path != output_path:
+                            output_path = new_path
+                
+                output_size = get_readable_filesize(os.path.getsize(output_path))
             else:
-                return False, "-"
+                output_size = "-"
+            
+            self.save_log_file(video_name, result.stdout, result.stderr, success)
+            
+            return success, output_size, result.returncode
         except Exception:
-            return False, "-"
+            return False, "-", -1
     
     def get_output_path(self, video_path):
         output_dir = self.output_path_edit.text()
         if output_dir:
             video_name = os.path.splitext(os.path.basename(video_path))[0]
+            if self.remove_crc_check.isChecked():
+                video_name = self.remove_crc_from_filename(video_name)
             output_format = self.output_format_combo.currentText().lower()
             return os.path.join(output_dir, video_name + "." + output_format)
         else:
@@ -562,6 +587,64 @@ class MuxSettingTab(QWidget):
             '.woff2': 'font/woff2',
         }
         return mime_types.get(ext, 'application/octet-stream')
+    
+    def calculate_crc32(self, file_path):
+        crc = 0
+        try:
+            with open(file_path, 'rb') as f:
+                for chunk in iter(lambda: f.read(8192), b''):
+                    crc = zlib.crc32(chunk, crc)
+            return format(crc & 0xFFFFFFFF, '08X')
+        except Exception:
+            return None
+    
+    def remove_crc_from_filename(self, filename):
+        crc_pattern = r'\[[A-Fa-f0-9]{8}\]'
+        return re.sub(crc_pattern, '', filename).strip()
+    
+    def add_crc_to_filename(self, file_path, crc):
+        dir_path = os.path.dirname(file_path)
+        filename = os.path.basename(file_path)
+        name, ext = os.path.splitext(filename)
+        new_filename = f"{name} [{crc}]{ext}"
+        new_path = os.path.join(dir_path, new_filename)
+        try:
+            os.rename(file_path, new_path)
+            return new_path
+        except Exception:
+            return file_path
+    
+    def save_log_file(self, video_name, stdout_text, stderr_text, success):
+        if not self.keep_log_check.isChecked():
+            return
+        
+        output_dir = self.output_path_edit.text()
+        if not output_dir:
+            return
+        
+        log_dir = os.path.join(output_dir, "logs")
+        try:
+            os.makedirs(log_dir, exist_ok=True)
+        except Exception:
+            return
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_filename = f"{video_name}_{timestamp}.log"
+        log_path = os.path.join(log_dir, log_filename)
+        
+        try:
+            with open(log_path, 'w', encoding='utf-8') as f:
+                f.write(f"=== 九歌 MKV 混流日志 ===\n")
+                f.write(f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"视频: {video_name}\n")
+                f.write(f"状态: {'成功' if success else '失败'}\n")
+                f.write(f"\n{'='*50}\n")
+                f.write(f"\n=== 标准输出 ===\n")
+                f.write(stdout_text if stdout_text else "(无)")
+                f.write(f"\n\n=== 标准错误 ===\n")
+                f.write(stderr_text if stderr_text else "(无)")
+        except Exception:
+            pass
     
     def update_theme_mode_state(self):
         pass

@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
 import os
 import winreg
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtGui import QDropEvent
 from PySide6.QtWidgets import QFrame, QVBoxLayout, QMessageBox, QFileDialog, QDialog
 
 from packages.Startup import GlobalIcons
 from packages.Startup.Options import Options
+from packages.Startup.PreDefined import VIDEO_EXTENSIONS
 from packages.Tabs.TabsManager import TabsManager
 from packages.Tabs.GlobalSetting import GlobalSetting
 from packages.Widgets.MyMainWindow import MyMainWindow
@@ -16,7 +18,7 @@ class MainWindow(MyMainWindow):
     def __init__(self, args=None, parent=None):
         super().__init__(args=args, parent=parent)
         self.resize(1160, 635)
-        self.setWindowTitle("九歌 MKV批量混流工具 v1.0.0")
+        self.setWindowTitle("九歌 MKV批量混流工具 v1.1.0")
         self.setWindowIcon(GlobalIcons.AppIcon.get())
         
         Options.load()
@@ -183,3 +185,43 @@ class MainWindow(MyMainWindow):
             return
         
         super().closeEvent(event)
+    
+    def dropEvent(self, event: QDropEvent):
+        urls = event.mimeData().urls()
+        if not urls:
+            return
+        
+        video_files = []
+        folders = []
+        
+        for url in urls:
+            path = url.toLocalFile()
+            if os.path.isfile(path):
+                ext = os.path.splitext(path)[1].lower()
+                if ext in VIDEO_EXTENSIONS:
+                    video_files.append(path)
+            elif os.path.isdir(path):
+                folders.append(path)
+        
+        if folders:
+            folder = folders[0]
+            self.tabs.video_tab.current_source_dir = folder
+            self.tabs.video_tab.source_path_edit.setText(folder)
+            self.tabs.video_tab.load_videos()
+        elif video_files:
+            existing_files = set(GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST)
+            new_files = [vf for vf in video_files if vf not in existing_files]
+            
+            if new_files:
+                total_count = len(GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST) + len(new_files)
+                
+                if total_count == 1:
+                    self.tabs.video_tab.current_source_dir = os.path.dirname(new_files[0])
+                    self.tabs.video_tab.source_path_edit.setText(self.tabs.video_tab.current_source_dir)
+                else:
+                    self.tabs.video_tab.current_source_dir = ""
+                    self.tabs.video_tab.source_path_edit.clear()
+                
+                self.tabs.video_tab.load_video_files_append(new_files)
+        
+        event.acceptProposedAction()

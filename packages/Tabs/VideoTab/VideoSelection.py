@@ -145,6 +145,7 @@ class VideoSelectionSetting(QWidget):
                 audio_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 self.video_table.setItem(row, 3, audio_item)
         
+        self.update_selected_indices()
         self.video_list_updated.emit()
     
     def load_video_files(self, file_paths):
@@ -418,17 +419,25 @@ class VideoSelectionSetting(QWidget):
             return subtitle_tracks, audio_tracks, attachment_tracks
         
         file_paths = GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST.copy()
+        total_files = len(file_paths)
+        
+        temp_subtitles = [None] * total_files
+        temp_audios = [None] * total_files
+        temp_attachments = [None] * total_files
         
         with ThreadPoolExecutor(max_workers=4) as executor:
-            futures = {executor.submit(get_track_info, fp): i for i, fp in enumerate(file_paths)}
-            
+            futures = {}
+            for i, fp in enumerate(file_paths):
+                future = executor.submit(get_track_info, fp)
+                futures[future] = i
+        
             for future in as_completed(futures):
                 i = futures[future]
                 try:
                     subtitle_tracks, audio_tracks, attachment_tracks = future.result()
-                    GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO.append((i, subtitle_tracks))
-                    GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO.append((i, audio_tracks))
-                    GlobalSetting.VIDEO_OLD_ATTACHMENTS_INFO.append((i, attachment_tracks))
+                    temp_subtitles[i] = subtitle_tracks
+                    temp_audios[i] = audio_tracks
+                    temp_attachments[i] = attachment_tracks
                     
                     sub_item = QTableWidgetItem(str(len(subtitle_tracks)))
                     sub_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -440,13 +449,9 @@ class VideoSelectionSetting(QWidget):
                 except Exception:
                     pass
         
-        GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO.sort(key=lambda x: x[0])
-        GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO.sort(key=lambda x: x[0])
-        GlobalSetting.VIDEO_OLD_ATTACHMENTS_INFO.sort(key=lambda x: x[0])
-        
-        GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO = [x[1] for x in GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO]
-        GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO = [x[1] for x in GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO]
-        GlobalSetting.VIDEO_OLD_ATTACHMENTS_INFO = [x[1] for x in GlobalSetting.VIDEO_OLD_ATTACHMENTS_INFO]
+        GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO = temp_subtitles
+        GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO = temp_audios
+        GlobalSetting.VIDEO_OLD_ATTACHMENTS_INFO = temp_attachments
     
     def show_media_info(self):
         selected_rows = self.video_table.selectedItems()

@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QTabWidget
+from PySide6.QtWidgets import QTabWidget, QPushButton, QHBoxLayout, QWidget
 
 from packages.Tabs.VideoTab.VideoSelection import VideoSelectionSetting
 from packages.Tabs.SubtitleTab.SubtitleSelection import SubtitleSelectionSetting
 from packages.Tabs.AudioTab.AudioSelection import AudioSelectionSetting
 from packages.Tabs.AttachmentTab.AttachmentSelection import AttachmentSelectionSetting
 from packages.Tabs.MuxSetting.MuxSetting import MuxSettingTab
+from packages.Widgets.AboutDialog import AboutDialog
 
 from packages.Tabs.GlobalSetting import GlobalSetting
 
@@ -36,6 +37,7 @@ class TabsManager(QTabWidget):
         self.tabs_status = [True, True, False, False, True]
         
         self.add_tabs()
+        self.setup_corner_button()
         self.connect_signals()
     
     def add_tabs(self):
@@ -44,6 +46,16 @@ class TabsManager(QTabWidget):
         self.addTab(self.audio_tab, "音轨")
         self.addTab(self.attachment_tab, "附件")
         self.addTab(self.mux_setting_tab, "开始混流")
+    
+    def setup_corner_button(self):
+        about_btn = QPushButton("关于")
+        about_btn.setFlat(True)
+        about_btn.clicked.connect(self.show_about_dialog)
+        self.setCornerWidget(about_btn)
+    
+    def show_about_dialog(self):
+        dialog = AboutDialog(self)
+        dialog.exec()
     
     def connect_signals(self):
         self.video_tab.video_list_updated.connect(self.on_video_list_updated)

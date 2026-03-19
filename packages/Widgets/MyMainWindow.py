@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 import os
 from PySide6.QtWidgets import QMainWindow
-from PySide6.QtGui import QPixmap, QPainter, QPen, QColor
+from PySide6.QtGui import QPixmap, QPainter, QPen, QColor, QDragEnterEvent, QDropEvent
 from PySide6.QtCore import Qt, QPointF
 
 
@@ -39,6 +39,22 @@ class MyMainWindow(QMainWindow):
     def __init__(self, args=None, parent=None):
         super().__init__(parent)
         self.args = args or []
+        self.setAcceptDrops(True)
+    
+    def dragEnterEvent(self, event: QDragEnterEvent):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+    
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+    
+    def dropEvent(self, event: QDropEvent):
+        pass
     
     def apply_light_theme(self):
         if MyMainWindow._checkmark_pixmap is None:

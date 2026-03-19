@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import os
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTreeWidget, QTreeWidgetItem, QHeaderView, QCheckBox, QDialogButtonBox,
@@ -61,10 +62,10 @@ class TrackSelectionDialog(QDialog):
         self.tree.header().setSectionResizeMode(4, QHeaderView.Interactive)
         self.tree.header().setSectionResizeMode(5, QHeaderView.Interactive)
         
-        self.tree.setColumnWidth(0, 565)
+        self.tree.setColumnWidth(0, 520)
         self.tree.setColumnWidth(1, 65)
         self.tree.setColumnWidth(2, 165)
-        self.tree.setColumnWidth(3, 120)
+        self.tree.setColumnWidth(3, 85)
         self.tree.setColumnWidth(4, 75)
         self.tree.setColumnWidth(5, 75)
         
@@ -81,6 +82,10 @@ class TrackSelectionDialog(QDialog):
         self.deselect_all_btn = QPushButton("全不选保留")
         self.deselect_all_btn.clicked.connect(self.deselect_all)
         button_layout.addWidget(self.deselect_all_btn)
+        
+        self.set_external_audio_default_btn = QPushButton("外部音轨设为默认")
+        self.set_external_audio_default_btn.clicked.connect(self.set_external_audio_default)
+        button_layout.addWidget(self.set_external_audio_default_btn)
         
         self.set_external_sub_default_btn = QPushButton("外部字幕设为默认")
         self.set_external_sub_default_btn.clicked.connect(self.set_external_subtitle_default)
@@ -111,7 +116,7 @@ class TrackSelectionDialog(QDialog):
         layout.addWidget(checkbox)
         return widget
     
-    def create_centered_combobox(self, items, current_index=0, fixed_width=100):
+    def create_centered_combobox(self, items, current_index=0, fixed_width=80):
         widget = QWidget()
         layout = QHBoxLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -121,7 +126,7 @@ class TrackSelectionDialog(QDialog):
         combo.setCurrentIndex(current_index)
         combo.setFixedWidth(fixed_width)
         layout.addWidget(combo)
-        return widget
+        return widget, combo
     
     def load_tracks(self):
         self.tree.clear()
@@ -151,16 +156,15 @@ class TrackSelectionDialog(QDialog):
                 item.setText(0, video_name if track_idx == 0 else "")
                 item.setText(1, "音轨")
                 item.setText(2, info)
+                item.setForeground(1, QColor("#2196F3"))
                 item.setTextAlignment(0, Qt.AlignLeft | Qt.AlignVCenter)
                 item.setTextAlignment(1, Qt.AlignCenter)
                 item.setTextAlignment(2, Qt.AlignLeft | Qt.AlignVCenter)
                 
-                lang_widget = self.create_centered_combobox(
+                lang_widget, lang_combo = self.create_centered_combobox(
                     [lang_name for _, lang_name in AUDIO_LANGUAGES],
-                    self.get_lang_index(lang, AUDIO_LANGUAGES),
-                    100
+                    self.get_lang_index(lang, AUDIO_LANGUAGES)
                 )
-                lang_combo = lang_widget.findChild(QComboBox)
                 self.tree.setItemWidget(item, 3, lang_widget)
                 
                 keep_widget = self.create_centered_checkbox(True)
@@ -188,17 +192,16 @@ class TrackSelectionDialog(QDialog):
                 item.setText(0, "")
                 item.setText(1, "音轨")
                 item.setText(2, info)
+                item.setForeground(1, QColor("#00BCD4"))
+                item.setForeground(2, QColor("#9C27B0"))
                 item.setTextAlignment(0, Qt.AlignLeft | Qt.AlignVCenter)
                 item.setTextAlignment(1, Qt.AlignCenter)
                 item.setTextAlignment(2, Qt.AlignLeft | Qt.AlignVCenter)
-                item.setForeground(2, Qt.darkGreen)
                 
-                lang_widget = self.create_centered_combobox(
+                lang_widget, lang_combo = self.create_centered_combobox(
                     [lang_name for _, lang_name in AUDIO_LANGUAGES],
-                    0,
-                    100
+                    0
                 )
-                lang_combo = lang_widget.findChild(QComboBox)
                 self.tree.setItemWidget(item, 3, lang_widget)
                 
                 keep_widget = self.create_centered_checkbox(True)
@@ -235,16 +238,15 @@ class TrackSelectionDialog(QDialog):
                 item.setText(0, "")
                 item.setText(1, "字幕")
                 item.setText(2, info)
+                item.setForeground(1, QColor("#FF9800"))
                 item.setTextAlignment(0, Qt.AlignLeft | Qt.AlignVCenter)
                 item.setTextAlignment(1, Qt.AlignCenter)
                 item.setTextAlignment(2, Qt.AlignLeft | Qt.AlignVCenter)
                 
-                lang_widget = self.create_centered_combobox(
+                lang_widget, lang_combo = self.create_centered_combobox(
                     [lang_name for _, lang_name in SUBTITLE_LANGUAGES],
-                    self.get_lang_index(lang, SUBTITLE_LANGUAGES),
-                    100
+                    self.get_lang_index(lang, SUBTITLE_LANGUAGES)
                 )
-                lang_combo = lang_widget.findChild(QComboBox)
                 self.tree.setItemWidget(item, 3, lang_widget)
                 
                 keep_widget = self.create_centered_checkbox(True)
@@ -272,17 +274,16 @@ class TrackSelectionDialog(QDialog):
                 item.setText(0, "")
                 item.setText(1, "字幕")
                 item.setText(2, info)
+                item.setForeground(1, QColor("#E91E63"))
+                item.setForeground(2, Qt.darkGreen)
                 item.setTextAlignment(0, Qt.AlignLeft | Qt.AlignVCenter)
                 item.setTextAlignment(1, Qt.AlignCenter)
                 item.setTextAlignment(2, Qt.AlignLeft | Qt.AlignVCenter)
-                item.setForeground(2, Qt.darkGreen)
                 
-                lang_widget = self.create_centered_combobox(
+                lang_widget, lang_combo = self.create_centered_combobox(
                     [lang_name for _, lang_name in SUBTITLE_LANGUAGES],
-                    0,
-                    100
+                    0
                 )
-                lang_combo = lang_widget.findChild(QComboBox)
                 self.tree.setItemWidget(item, 3, lang_widget)
                 
                 keep_widget = self.create_centered_checkbox(True)
@@ -348,6 +349,25 @@ class TrackSelectionDialog(QDialog):
             first_external_key = (video_idx, "ext_0")
             if first_external_key in self.default_checkboxes['subtitle']:
                 checkbox = self.default_checkboxes['subtitle'][first_external_key]
+                checkbox.blockSignals(True)
+                checkbox.setChecked(True)
+                checkbox.blockSignals(False)
+    
+    def set_external_audio_default(self):
+        for video_idx in range(len(GlobalSetting.VIDEO_FILES_LIST)):
+            external_audios = GlobalSetting.AUDIO_FILES_ABSOLUTE_PATH_LIST.get(video_idx, [])
+            if not external_audios:
+                continue
+            
+            for (v_idx, t_idx), checkbox in list(self.default_checkboxes['audio'].items()):
+                if v_idx == video_idx:
+                    checkbox.blockSignals(True)
+                    checkbox.setChecked(False)
+                    checkbox.blockSignals(False)
+            
+            first_external_key = (video_idx, "ext_0")
+            if first_external_key in self.default_checkboxes['audio']:
+                checkbox = self.default_checkboxes['audio'][first_external_key]
                 checkbox.blockSignals(True)
                 checkbox.setChecked(True)
                 checkbox.blockSignals(False)
