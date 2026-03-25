@@ -464,6 +464,13 @@ class MuxSettingTab(QWidget):
             if self.remove_crc_check.isChecked():
                 video_name = self.remove_crc_from_filename(video_name)
             output_format = self.output_format_combo.currentText().lower()
+            
+            # 检查输出目录是否与输入目录相同
+            input_dir = os.path.dirname(video_path)
+            if os.path.abspath(output_dir) == os.path.abspath(input_dir):
+                # 添加后缀避免冲突
+                video_name += "_1"
+            
             return os.path.join(output_dir, video_name + "." + output_format)
         else:
             return video_path
