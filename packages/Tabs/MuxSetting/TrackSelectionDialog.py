@@ -37,8 +37,7 @@ class TrackSelectionDialog(QDialog):
         self.resize(1100, 700)
         
         self.track_selections = {}
-        self.radio_buttons = {}
-        
+
         self.setup_ui()
     
     def setup_ui(self):

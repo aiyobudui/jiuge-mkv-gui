@@ -29,8 +29,6 @@ class MuxSettingTab(QWidget):
     
     def __init__(self):
         super().__init__()
-        self.subtitle_track_items = []
-        self.audio_track_items = []
         self.track_selections = {
             'audio': {}, 
             'subtitle': {}, 

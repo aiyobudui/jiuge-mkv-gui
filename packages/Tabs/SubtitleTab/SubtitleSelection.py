@@ -3,9 +3,9 @@ import os
 from PySide6.QtCore import Signal, Qt, QTimer, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, 
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QTableWidget, QTableWidgetItem,
-    QHeaderView, QFileDialog, QGroupBox, QMessageBox, QFrame, QGraphicsOpacityEffect
+    QHeaderView, QFileDialog, QGroupBox, QMessageBox, QFrame
 )
 
 from packages.Startup import GlobalIcons
