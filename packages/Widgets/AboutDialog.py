@@ -8,8 +8,6 @@ from packages.Startup import GlobalIcons
 
 
 class AboutDialog(QDialog):
-    VERSION = "v1.1.0"
-    
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("关于")
@@ -34,7 +32,7 @@ class AboutDialog(QDialog):
             title_layout.addWidget(icon_label)
             title_layout.addSpacing(15)
         
-        title_label = QLabel(f"九歌 MKV 批量混流工具 {self.VERSION}")
+        title_label = QLabel("九歌 MKV 批量混流工具")
         title_layout.addWidget(title_label)
         title_layout.addStretch()
         
