@@ -6,18 +6,21 @@ import subprocess
 import threading
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from PySide6.QtCore import Signal, Qt
+from PySide6.QtCore import Signal, Qt, QUrl, QEvent, QSize
+from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
+from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, 
     QPushButton, QComboBox, QTableWidget, QTableWidgetItem,
     QHeaderView, QFileDialog, QGroupBox, QCheckBox,
-    QProgressBar, QMessageBox
+    QProgressBar, QMessageBox, QDialog, QTextEdit, QSlider, QSplitter, QListWidget
 )
 
 from packages.Startup import GlobalIcons
 from packages.Startup.Options import Options
 from packages.Tabs.GlobalSetting import GlobalSetting, get_readable_filesize
 from packages.Tabs.MuxSetting.TrackSelectionDialog import TrackSelectionDialog
+
 
 
 class MuxSettingTab(QWidget):
@@ -39,6 +42,7 @@ class MuxSettingTab(QWidget):
             'audio_languages': {},
             'subtitle_languages': {}
         }
+        self.video_cut_selections = {}  # 存储每个视频的切割时间设置
         self.setup_ui()
         self.connect_signals()
         self.total_tasks = 0
@@ -98,10 +102,9 @@ class MuxSettingTab(QWidget):
         options_group = QGroupBox("混流选项")
         options_layout = QHBoxLayout()
         
-        self.add_crc_check = QCheckBox("CRC校验")
+        self.add_crc_check = QCheckBox("写入新CRC")
+        self.add_crc_check.setChecked(True)
         options_layout.addWidget(self.add_crc_check)
-        self.remove_crc_check = QCheckBox("移除旧CRC")
-        options_layout.addWidget(self.remove_crc_check)
         
         self.keep_log_check = QCheckBox("保留日志")
         options_layout.addWidget(self.keep_log_check)
@@ -111,16 +114,31 @@ class MuxSettingTab(QWidget):
         
         options_layout.addStretch()
         
-        options_layout.addWidget(QLabel("轨道选择："))
-        self.track_select_button = QPushButton("选择想要保留的轨道")
-        self.track_select_button.setFixedWidth(150)
+        self.video_cut_button = QPushButton("视频切割")
+        self.video_cut_button.setFixedWidth(80)
+        self.video_cut_button.setEnabled(False)
+        self.video_cut_button.setStyleSheet("""
+            QPushButton {
+                background-color: #e0e0e0;
+                color: #999999;
+                border: 1px solid #cccccc;
+                padding: 5px 10px;
+            }
+            QPushButton:hover {
+                background-color: #d0d0d0;
+            }
+        """)
+        options_layout.addWidget(self.video_cut_button)
+        options_layout.addSpacing(10)
+        
+        self.track_select_button = QPushButton("轨道选择")
+        self.track_select_button.setFixedWidth(80)
         self.track_select_button.setEnabled(False)
         self.track_select_button.setStyleSheet("""
             QPushButton {
                 background-color: #e0e0e0;
                 color: #999999;
                 border: 1px solid #cccccc;
-                border-radius: 4px;
                 padding: 5px 10px;
             }
             QPushButton:hover {
@@ -177,6 +195,7 @@ class MuxSettingTab(QWidget):
         self.muxing_finished_signal.connect(self.on_muxing_finished)
         
         self.track_select_button.clicked.connect(self.show_track_selection_dialog)
+        self.video_cut_button.clicked.connect(self.show_video_cut_dialog)
     
     def show_track_selection_dialog(self):
         if not GlobalSetting.VIDEO_FILES_LIST:
@@ -193,6 +212,38 @@ class MuxSettingTab(QWidget):
             self.track_selections['external_subtitle'] = selections['external_subtitle']
             self.track_selections['audio_languages'] = selections['audio_languages']
             self.track_selections['subtitle_languages'] = selections['subtitle_languages']
+    
+    def show_video_cut_dialog(self):
+        if not GlobalSetting.VIDEO_FILES_LIST:
+            QMessageBox.warning(self, "警告", "请先添加视频文件")
+            return
+        
+        if not GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST:
+            QMessageBox.warning(self, "警告", "视频文件路径列表为空")
+            return
+        
+        # 使用第一个视频文件作为预览
+        try:
+            video_path = GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST[0]
+            if not os.path.exists(video_path):
+                QMessageBox.warning(self, "警告", f"视频文件不存在: {video_path}")
+                return
+            
+            dialog = VideoPreviewDialog(video_path, self)
+            if dialog.exec():
+                cut_times = dialog.get_cut_times()
+                if cut_times:
+                    # 为所有视频设置相同的切割时间
+                    for i in range(len(GlobalSetting.VIDEO_FILES_LIST)):
+                        self.video_cut_selections[i] = cut_times
+                else:
+                    # 没有设置切割时间，清除设置
+                    self.video_cut_selections.clear()
+            else:
+                # 取消时清除切割设置
+                self.video_cut_selections.clear()
+        except Exception as e:
+            QMessageBox.warning(self, "错误", f"打开视频预览对话框失败: {str(e)}")
     
     def on_update_task(self, row, status, progress, output_size):
         if row < self.task_table.rowCount():
@@ -261,7 +312,19 @@ class MuxSettingTab(QWidget):
                 background-color: #e0e0e0;
                 color: #999999;
                 border: 1px solid #cccccc;
-                border-radius: 4px;
+                padding: 5px 10px;
+            }
+            QPushButton:hover {
+                background-color: #d0d0d0;
+            }
+        """)
+        
+        self.video_cut_button.setEnabled(False)
+        self.video_cut_button.setStyleSheet("""
+            QPushButton {
+                background-color: #e0e0e0;
+                color: #999999;
+                border: 1px solid #cccccc;
                 padding: 5px 10px;
             }
             QPushButton:hover {
@@ -328,7 +391,23 @@ class MuxSettingTab(QWidget):
                 background-color: #0078d4;
                 color: white;
                 border: 1px solid #006cbd;
-                border-radius: 4px;
+                padding: 5px 10px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #106ebe;
+            }
+            QPushButton:pressed {
+                background-color: #005a9e;
+            }
+        """)
+        
+        self.video_cut_button.setEnabled(True)
+        self.video_cut_button.setStyleSheet("""
+            QPushButton {
+                background-color: #0078d4;
+                color: white;
+                border: 1px solid #006cbd;
                 padding: 5px 10px;
                 font-weight: bold;
             }
@@ -459,7 +538,7 @@ class MuxSettingTab(QWidget):
         output_dir = self.output_path_edit.text()
         if output_dir:
             video_name = os.path.splitext(os.path.basename(video_path))[0]
-            if self.remove_crc_check.isChecked():
+            if self.add_crc_check.isChecked():
                 video_name = self.remove_crc_from_filename(video_name)
             output_format = self.output_format_combo.currentText().lower()
             
@@ -475,6 +554,20 @@ class MuxSettingTab(QWidget):
     
     def build_mkvmerge_args(self, video_index, video_path, output_path):
         args = ['-o', output_path]
+        
+        # 添加视频切割参数
+        if video_index in self.video_cut_selections:
+            cut_times = self.video_cut_selections[video_index]
+            if cut_times:
+                # 解析时间格式并添加切割参数
+                parts = cut_times.split(',')
+                split_parts = []
+                for part in parts:
+                    start, end = part.split('-')
+                    # 确保时间格式正确（mkvmerge 支持 HH:MM:SS.fff 格式）
+                    split_parts.append(f'{start},{end}')
+                split_param = ','.join(split_parts)
+                args.extend(['--split', f'parts:{split_param}'])
         
         selected_audio = self.get_selected_audio_tracks()
         if video_index in selected_audio:
@@ -656,3 +749,556 @@ class MuxSettingTab(QWidget):
     
     def set_preset_options(self):
         self.update_track_menus()
+
+
+class VideoCutDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("视频切割设置")
+        self.setMinimumWidth(500)
+        self.setMinimumHeight(300)
+        self.cut_times = ""
+        self.setup_ui()
+    
+    def setup_ui(self):
+        main_layout = QVBoxLayout()
+        
+        # 说明文本
+        info_label = QLabel("使用说明：")
+        info_text = QLabel("超重要格式规则（必须遵守）：\n"
+                          "1. 时间格式必须是：HH:MM:SS\n"
+                          "2. 不能写 05:00，必须写 00:05:00\n"
+                          "3. 开始和结束用英文减号 -\n"
+                          "4. 多段用英文逗号 ,\n"
+                          "5. 不能有空格\n"
+                          "6. 不能有中文符号\n\n"
+                          "例 1（单段）：00:05:00-00:15:00\n"
+                          "例 2（多段）：00:05:00-00:15:00,00:25:00-00:35:00\n\n"
+                          "批量视频切割说明：\n"
+                          "- 设置的切割时间会应用到所有添加到队列的视频文件\n"
+                          "- 所有视频都会按照相同的时间点进行切割\n"
+                          "- 建议确保所有视频的长度都大于设置的切割时间范围\n\n"
+                          "结果：只输出你写的时间段内容，其余全部切掉")
+        info_text.setWordWrap(True)
+        
+        # 时间输入
+        input_label = QLabel("切割时间：")
+        self.time_edit = QTextEdit()
+        self.time_edit.setPlaceholderText("请输入切割时间，例如：00:05:00-00:15:00")
+        
+        # 按钮布局
+        button_layout = QHBoxLayout()
+        self.ok_button = QPushButton("确定")
+        self.cancel_button = QPushButton("取消")
+        button_layout.addStretch()
+        button_layout.addWidget(self.ok_button)
+        button_layout.addWidget(self.cancel_button)
+        
+        # 添加到主布局
+        main_layout.addWidget(info_label)
+        main_layout.addWidget(info_text)
+        main_layout.addWidget(input_label)
+        main_layout.addWidget(self.time_edit)
+        main_layout.addLayout(button_layout)
+        
+        self.setLayout(main_layout)
+        
+        # 连接信号
+        self.ok_button.clicked.connect(self.accept)
+        self.cancel_button.clicked.connect(self.reject)
+    
+    def accept(self):
+        self.cut_times = self.time_edit.toPlainText().strip()
+        if self.cut_times:
+            # 简单验证时间格式
+            if self.validate_time_format(self.cut_times):
+                super().accept()
+            else:
+                QMessageBox.warning(self, "警告", "时间格式不正确，请按照示例格式输入")
+        else:
+            super().accept()
+    
+    def validate_time_format(self, time_str):
+        import re
+        # 严格的时间格式正则：HH:MM:SS-HH:MM:SS，确保没有空格和中文符号
+        time_pattern = r'^\d{2}:\d{2}:\d{2}-\d{2}:\d{2}:\d{2}(,\d{2}:\d{2}:\d{2}-\d{2}:\d{2}:\d{2})*$'
+        # 检查是否包含空格或中文符号
+        if ' ' in time_str or re.search('[\u4e00-\u9fa5]', time_str):
+            return False
+        return bool(re.match(time_pattern, time_str))
+    
+    def get_cut_times(self):
+        return self.cut_times
+
+
+class VideoPreviewDialog(QDialog):
+    def __init__(self, video_path, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("视频切割 - 可视化预览精准取点")
+        self.setMinimumWidth(1100)
+        self.setMinimumHeight(800)
+        self.video_path = video_path
+        self.duration = 0  # 初始化 duration
+        self.is_dragging = False  # 标记是否正在拖拽进度条
+        self.is_muted = False  # 标记是否静音
+        self.cut_segments = []  # 切割段列表，每个元素为 (start_time, end_time)
+        self.current_segment_start = None  # 当前正在设置的段的开始时间
+        self.setup_ui()
+        self.load_video()
+    
+    def setup_ui(self):
+        main_layout = QVBoxLayout()
+        
+        # 视频播放区域
+        self.video_widget = QVideoWidget()
+        self.video_widget.setMinimumHeight(500)
+        main_layout.addWidget(self.video_widget, 1)
+        
+        # 视频进度条
+        self.progress_bar = QSlider(Qt.Horizontal)
+        self.progress_bar.setMinimum(0)
+        self.progress_bar.setMaximum(1000)
+        self.progress_bar.setValue(0)
+        # 启用滑块跟踪，使拖拽更流畅
+        self.progress_bar.setTracking(True)
+        main_layout.addWidget(self.progress_bar)
+        
+        # 主要内容区域 - 分为左右两部分
+        main_content_layout = QHBoxLayout()
+        
+        # 左侧区域：切割点和切割段列表
+        left_layout = QVBoxLayout()
+        
+        # 切割点（支持手动输入）
+        points_group = QGroupBox("切割点（支持手动输入）")
+        points_group_layout = QHBoxLayout()
+        self.in_point_label = QLabel("开始：")
+        self.out_point_label = QLabel("结束：")
+        self.in_point_edit = QLineEdit()
+        self.in_point_edit.setPlaceholderText("HH:MM:SS.fff")
+        self.in_point_edit.setFixedWidth(180)
+        self.out_point_edit = QLineEdit()
+        self.out_point_edit.setPlaceholderText("HH:MM:SS.fff")
+        self.out_point_edit.setFixedWidth(180)
+        points_group_layout.addWidget(self.in_point_label)
+        points_group_layout.addWidget(self.in_point_edit)
+        points_group_layout.addSpacing(20)
+        points_group_layout.addWidget(self.out_point_label)
+        points_group_layout.addWidget(self.out_point_edit)
+        points_group_layout.addStretch()
+        points_group.setLayout(points_group_layout)
+        left_layout.addWidget(points_group)
+        
+        # 切割段列表
+        segments_group = QGroupBox("切割段列表")
+        segments_group_layout = QVBoxLayout()
+        
+        # 切割段列表控件
+        self.segments_list = QListWidget()
+        self.segments_list.setMinimumHeight(60)
+        self.segments_list.setMaximumHeight(80)
+        segments_group_layout.addWidget(self.segments_list)
+        
+        # 切割段控制按钮
+        segments_buttons_layout = QHBoxLayout()
+        segments_buttons_layout.addStretch()
+        self.add_segment_button = QPushButton("添加当前段")
+        self.add_segment_button.setFixedWidth(100)
+        self.remove_segment_button = QPushButton("删除选中段")
+        self.remove_segment_button.setFixedWidth(100)
+        self.clear_segments_button = QPushButton("清空所有段")
+        self.clear_segments_button.setFixedWidth(100)
+        segments_buttons_layout.addWidget(self.add_segment_button)
+        segments_buttons_layout.addWidget(self.remove_segment_button)
+        segments_buttons_layout.addWidget(self.clear_segments_button)
+        segments_buttons_layout.addStretch()
+        segments_group_layout.addLayout(segments_buttons_layout)
+        
+        segments_group.setLayout(segments_group_layout)
+        left_layout.addWidget(segments_group)
+        
+        # 右侧区域：播放控制和标记按钮
+        right_layout = QVBoxLayout()
+        
+        # 播放控制
+        control_layout = QHBoxLayout()
+        control_layout.addStretch()
+        self.play_button = QPushButton("播放")
+        self.pause_button = QPushButton("暂停")
+        self.stop_button = QPushButton("停止")
+        self.mute_button = QPushButton("静音")
+        control_layout.addWidget(self.play_button)
+        control_layout.addWidget(self.pause_button)
+        control_layout.addWidget(self.stop_button)
+        control_layout.addWidget(self.mute_button)
+        control_layout.addSpacing(20)
+        # 逐帧控制
+        self.prev_frame_button = QPushButton("前1帧")
+        self.next_frame_button = QPushButton("后1帧")
+        control_layout.addWidget(self.prev_frame_button)
+        control_layout.addWidget(self.next_frame_button)
+        control_layout.addStretch()
+        right_layout.addLayout(control_layout)
+        
+        # 时间显示和标记按钮
+        time_mark_layout = QHBoxLayout()
+        time_mark_layout.addStretch()
+        # 时间显示标签
+        self.time_label = QLabel("00:00:00.000")
+        self.time_label.setFixedWidth(150)
+        time_mark_layout.addWidget(QLabel("当前时间："))
+        time_mark_layout.addWidget(self.time_label)
+        time_mark_layout.addSpacing(20)
+        # 标记按钮
+        self.mark_in_button = QPushButton("标记开始")
+        self.mark_out_button = QPushButton("标记结束")
+        time_mark_layout.addWidget(self.mark_in_button)
+        time_mark_layout.addWidget(self.mark_out_button)
+        time_mark_layout.addStretch()
+        right_layout.addLayout(time_mark_layout)
+        
+        # 将左右布局添加到主内容布局
+        main_content_layout.addLayout(left_layout, 1)
+        main_content_layout.addLayout(right_layout, 1)
+        main_layout.addLayout(main_content_layout)
+        
+        # 底部按钮
+        bottom_layout = QHBoxLayout()
+        self.help_button = QPushButton("使用说明")
+        bottom_layout.addWidget(self.help_button)
+        bottom_layout.addStretch()
+        self.ok_button = QPushButton("确定")
+        self.cancel_button = QPushButton("取消")
+        bottom_layout.addWidget(self.ok_button)
+        bottom_layout.addWidget(self.cancel_button)
+        main_layout.addLayout(bottom_layout)
+        
+        self.setLayout(main_layout)
+        
+        # 连接信号
+        self.play_button.clicked.connect(self.play_video)
+        self.pause_button.clicked.connect(self.pause_video)
+        self.stop_button.clicked.connect(self.stop_video)
+        self.mute_button.clicked.connect(self.toggle_mute)
+        self.prev_frame_button.clicked.connect(self.prev_frame)
+        self.next_frame_button.clicked.connect(self.next_frame)
+        self.mark_in_button.clicked.connect(self.mark_start_point)
+        self.mark_out_button.clicked.connect(self.mark_end_point)
+        self.add_segment_button.clicked.connect(self.add_segment)
+        self.remove_segment_button.clicked.connect(self.remove_segment)
+        self.clear_segments_button.clicked.connect(self.clear_segments)
+        self.help_button.clicked.connect(self.show_help)
+        self.ok_button.clicked.connect(self.accept)
+        self.cancel_button.clicked.connect(self.reject)
+        self.progress_bar.sliderPressed.connect(self.on_progress_slider_pressed)
+        self.progress_bar.sliderReleased.connect(self.on_progress_slider_released)
+        self.progress_bar.sliderMoved.connect(self.on_progress_slider_moved)
+        
+        # 为所有控件安装事件过滤器，确保空格键总是控制播放/暂停
+        self.installEventFilter(self)
+        self.video_widget.installEventFilter(self)
+        self.play_button.installEventFilter(self)
+        self.pause_button.installEventFilter(self)
+        self.stop_button.installEventFilter(self)
+        self.mute_button.installEventFilter(self)
+        self.prev_frame_button.installEventFilter(self)
+        self.next_frame_button.installEventFilter(self)
+        self.mark_in_button.installEventFilter(self)
+        self.mark_out_button.installEventFilter(self)
+        self.add_segment_button.installEventFilter(self)
+        self.remove_segment_button.installEventFilter(self)
+        self.clear_segments_button.installEventFilter(self)
+        self.help_button.installEventFilter(self)
+        self.ok_button.installEventFilter(self)
+        self.cancel_button.installEventFilter(self)
+        self.in_point_edit.installEventFilter(self)
+        self.out_point_edit.installEventFilter(self)
+        self.progress_bar.installEventFilter(self)
+        self.time_label.installEventFilter(self)
+    
+    def load_video(self):
+        try:
+            self.player = QMediaPlayer()
+            self.player.setVideoOutput(self.video_widget)
+            # 启用音频
+            self.audio_output = QAudioOutput()
+            self.player.setAudioOutput(self.audio_output)
+            
+            # 使用 setSource 方法加载视频（PySide6 6.10+）
+            self.player.setSource(QUrl.fromLocalFile(self.video_path))
+            
+            self.player.durationChanged.connect(self.on_duration_changed)
+            self.player.positionChanged.connect(self.on_position_changed)
+            # 移除 videoAvailableChanged 信号连接，因为在当前 PySide6 版本中不可用
+        except Exception as e:
+            # 视频加载失败时，显示错误信息但仍允许对话框打开
+            error_label = QLabel(f"视频加载失败: {str(e)}")
+            error_label.setStyleSheet("color: red;")
+            error_label.setWordWrap(True)
+            # 找到视频播放区域的布局并添加错误信息
+            video_container = self.video_widget.parent()
+            if video_container:
+                video_layout = video_container.layout()
+                if video_layout:
+                    video_layout.addWidget(error_label)
+    
+    def play_video(self):
+        self.player.play()
+        # 更新按钮高亮状态
+        self.play_button.setStyleSheet("background-color: #106ebe; color: white;")
+        self.pause_button.setStyleSheet("")
+        self.stop_button.setStyleSheet("")
+    
+    def pause_video(self):
+        self.player.pause()
+        # 更新按钮高亮状态
+        self.play_button.setStyleSheet("")
+        self.pause_button.setStyleSheet("background-color: #106ebe; color: white;")
+        self.stop_button.setStyleSheet("")
+    
+    def stop_video(self):
+        self.player.stop()
+        # 更新按钮高亮状态
+        self.play_button.setStyleSheet("")
+        self.pause_button.setStyleSheet("")
+        self.stop_button.setStyleSheet("background-color: #106ebe; color: white;")
+    
+    def toggle_mute(self):
+        self.is_muted = not self.is_muted
+        self.audio_output.setMuted(self.is_muted)
+        # 更新静音按钮高亮状态
+        if self.is_muted:
+            self.mute_button.setStyleSheet("background-color: #106ebe; color: white;")
+        else:
+            self.mute_button.setStyleSheet("")
+    
+    def prev_frame(self):
+        # 逐帧后退（这里使用10ms作为一帧的近似值）
+        current_pos = self.player.position()
+        new_pos = max(0, current_pos - 10)
+        self.player.setPosition(new_pos)
+    
+    def next_frame(self):
+        # 逐帧前进（这里使用10ms作为一帧的近似值）
+        current_pos = self.player.position()
+        new_pos = min(self.player.duration(), current_pos + 10)
+        self.player.setPosition(new_pos)
+    
+    def mark_start_point(self):
+        current_pos = self.player.position()
+        start_time = self.format_time(current_pos)
+        self.current_segment_start = start_time
+        self.in_point_edit.setText(start_time)
+    
+    def mark_end_point(self):
+        current_pos = self.player.position()
+        end_time = self.format_time(current_pos)
+        self.out_point_edit.setText(end_time)
+    
+    def add_segment(self):
+        start_time = self.in_point_edit.text().strip()
+        end_time = self.out_point_edit.text().strip()
+        
+        if start_time and end_time:
+            # 验证时间格式
+            if self.validate_time_format(start_time) and self.validate_time_format(end_time):
+                # 确保开始时间小于结束时间
+                if self.time_to_ms(start_time) < self.time_to_ms(end_time):
+                    self.cut_segments.append((start_time, end_time))
+                    self.update_segments_list()
+                    # 清空输入框，准备设置下一段
+                    self.in_point_edit.clear()
+                    self.out_point_edit.clear()
+                    self.current_segment_start = None
+                else:
+                    QMessageBox.warning(self, "警告", "开始时间必须小于结束时间")
+            else:
+                QMessageBox.warning(self, "警告", "时间格式不正确，请使用 HH:MM:SS.fff 格式")
+        else:
+            QMessageBox.warning(self, "警告", "请先设置开始和结束时间")
+    
+    def remove_segment(self):
+        selected_items = self.segments_list.selectedItems()
+        if selected_items:
+            for item in selected_items:
+                index = self.segments_list.row(item)
+                if 0 <= index < len(self.cut_segments):
+                    self.cut_segments.pop(index)
+            self.update_segments_list()
+        else:
+            QMessageBox.warning(self, "警告", "请先选择要删除的切割段")
+    
+    def clear_segments(self):
+        self.cut_segments.clear()
+        self.update_segments_list()
+        self.in_point_edit.clear()
+        self.out_point_edit.clear()
+        self.current_segment_start = None
+    
+    def update_segments_list(self):
+        self.segments_list.clear()
+        for i, (start, end) in enumerate(self.cut_segments):
+            item_text = f"段 {i+1}: {start} - {end}"
+            self.segments_list.addItem(item_text)
+    
+    def validate_time_format(self, time_str):
+        # 验证时间格式是否为 HH:MM:SS.fff
+        import re
+        pattern = r'^\d{2}:\d{2}:\d{2}\.\d{3}$'
+        return bool(re.match(pattern, time_str))
+    
+    def time_to_ms(self, time_str):
+        # 将时间字符串转换为毫秒
+        try:
+            parts = time_str.split(':')
+            hours = int(parts[0])
+            minutes = int(parts[1])
+            seconds, milliseconds = parts[2].split('.')
+            seconds = int(seconds)
+            milliseconds = int(milliseconds)
+            return hours * 3600000 + minutes * 60000 + seconds * 1000 + milliseconds
+        except:
+            return 0
+    
+    def format_time(self, ms):
+        # 将毫秒转换为 HH:MM:SS.fff 格式
+        seconds = ms / 1000
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = int(seconds % 60)
+        millisecs = int((seconds % 1) * 1000)
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}.{millisecs:03d}"
+    
+    def on_duration_changed(self, duration):
+        # 更新进度条最大值
+        self.duration = duration
+    
+    def on_position_changed(self, position):
+        self.time_label.setText(self.format_time(position))
+        # 更新进度条位置，但在拖拽时不更新
+        if self.duration > 0 and not self.is_dragging:
+            progress = int((position / self.duration) * 1000)
+            self.progress_bar.setValue(progress)
+    
+    def on_progress_slider_pressed(self):
+        # 进度条开始拖拽
+        self.is_dragging = True
+    
+    def on_progress_slider_released(self):
+        # 进度条拖拽释放时，跳转到对应位置
+        if self.duration > 0:
+            progress = self.progress_bar.value() / 1000
+            position = int(progress * self.duration)
+            self.player.setPosition(position)
+        self.is_dragging = False
+    
+    def on_progress_slider_moved(self, value):
+        # 进度条拖拽过程中更新时间显示
+        if self.duration > 0:
+            progress = value / 1000
+            position = int(progress * self.duration)
+            self.time_label.setText(self.format_time(position))
+    
+    def get_cut_times(self):
+        # 从切割段列表中获取切割时间
+        if self.cut_segments:
+            segments_str = []
+            for start, end in self.cut_segments:
+                segments_str.append(f"{start}-{end}")
+            return ",".join(segments_str)
+        
+        # 如果没有添加切割段，尝试从输入框获取
+        in_point = self.in_point_edit.text().strip()
+        out_point = self.out_point_edit.text().strip()
+        
+        if in_point and out_point:
+            return f"{in_point}-{out_point}"
+        return ""
+    
+    def keyPressEvent(self, event):
+        # 支持空格键播放/暂停
+        if event.key() == Qt.Key_Space:
+            # 直接切换播放状态，不依赖playbackState()
+            if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+                self.pause_video()
+            else:
+                self.play_video()
+            # 阻止事件传递，避免其他控件响应
+            event.accept()
+        else:
+            super().keyPressEvent(event)
+    
+    def focusInEvent(self, event):
+        # 确保对话框获得焦点时，视频控件也获得焦点
+        self.video_widget.setFocus()
+        super().focusInEvent(event)
+    
+    def showEvent(self, event):
+        # 确保对话框获得焦点
+        super().showEvent(event)
+        self.setFocus()
+    
+    def eventFilter(self, obj, event):
+        # 捕获所有控件的键盘事件
+        if event.type() == QEvent.KeyPress:
+            if event.key() == Qt.Key_Space:
+                # 空格键：控制播放/暂停
+                if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+                    self.pause_video()
+                else:
+                    self.play_video()
+                event.accept()
+                return True
+            elif event.key() == Qt.Key_Left:
+                # 左箭头：向后一秒
+                current_pos = self.player.position()
+                new_pos = max(0, current_pos - 1000)  # 1000ms = 1秒
+                self.player.setPosition(new_pos)
+                event.accept()
+                return True
+            elif event.key() == Qt.Key_Right:
+                # 右箭头：前进一秒
+                current_pos = self.player.position()
+                new_pos = min(self.player.duration(), current_pos + 1000)  # 1000ms = 1秒
+                self.player.setPosition(new_pos)
+                event.accept()
+                return True
+            elif event.key() == Qt.Key_Up:
+                # 上箭头：上1帧
+                self.prev_frame()
+                event.accept()
+                return True
+            elif event.key() == Qt.Key_Down:
+                # 下箭头：下1帧
+                self.next_frame()
+                event.accept()
+                return True
+        return super().eventFilter(obj, event)
+    
+    def show_help(self):
+        # 显示详细的使用说明
+        help_dialog = QDialog(self)
+        help_dialog.setWindowTitle("视频切割使用说明")
+        help_dialog.setMinimumWidth(800)
+        help_dialog.setMinimumHeight(600)
+        
+        layout = QVBoxLayout()
+        
+        # 详细使用说明文本
+        help_text = QTextEdit()
+        help_text.setReadOnly(True)
+        help_text.setText('视频切割使用说明\n\n切割方法\n方法一：可视化标记（推荐）\n1. 标记开始点：\n   - 播放视频到想要保留的开始位置\n   - 点击"标记开始"按钮\n   - 或按空格键暂停视频后点击"标记开始"按钮\n\n2. 标记结束点：\n   - 播放视频到想要保留的结束位置\n   - 点击"标记结束"按钮\n   - 或按空格键暂停视频后点击"标记结束"按钮\n\n3. 添加切割段：\n   - 点击"添加当前段"按钮，将设置的切割段添加到列表中\n   - 重复上述步骤，添加多个切割段\n\n方法二：手动输入时间\n1. 在"开始"和"结束"输入框中直接输入时间，格式为 HH:MM:SS.fff\n2. 点击"添加当前段"按钮，将设置的切割段添加到列表中\n\n切割段管理\n- 删除切割段：在切割段列表中选择要删除的段，点击"删除选中段"按钮\n- 清空所有段：点击"清空所有段"按钮，删除所有已设置的切割段\n\n键盘快捷键\n- 空格键：播放/暂停视频\n- 左箭头：向后移动1秒\n- 右箭头：向前移动1秒\n- 上箭头：向前移动1帧\n- 下箭头：向后移动1帧\n\n时间格式说明\n- 时间格式必须为 HH:MM:SS.fff（小时:分钟:秒.毫秒）\n- 例如：00:02:30.500 表示 2分30秒500毫秒\n- 不能简化为 02:30 或其他格式\n\n高级技巧\n切割掉片头、广告和片尾\n1. 保留第一段：设置从片头结束后到广告开始前的时间段\n2. 保留第二段：设置从广告结束后到片尾开始前的时间段\n3. 点击确定：程序会自动只保留这两个时间段，其他部分会被切割掉\n\n精确调整切割点\n- 使用方向键的上/下箭头可以逐帧调整，确保精确找到切割点\n- 播放视频时，可以按空格键暂停，然后使用方向键微调位置\n\n注意事项\n- 设置的切割时间会应用到所有添加到队列的视频文件\n- 确保切割段的开始时间小于结束时间\n- 多个切割段之间可以有间隔，间隔部分会被切割掉\n- 切割后的视频会按照原始视频的格式保存，保持画质不变')
+        
+        layout.addWidget(help_text)
+        
+        # 确定按钮
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        ok_button = QPushButton("确定")
+        ok_button.clicked.connect(help_dialog.accept)
+        button_layout.addWidget(ok_button)
+        layout.addLayout(button_layout)
+        
+        help_dialog.setLayout(layout)
+        help_dialog.exec()
+

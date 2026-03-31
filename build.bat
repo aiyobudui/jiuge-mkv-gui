@@ -59,7 +59,7 @@ echo.
 echo [Step 7/9] Building EXE...
 echo.
 
-python -m PyInstaller --windowed --name "jiuge-mkv-gui" --icon="Resources\Icons\App.ico" --add-data "Resources;Resources" --clean main.py
+python -m PyInstaller --windowed --name "jiuge-mkv-gui" --icon="Resources\Icons\App.ico" --add-data "Resources;Resources" --hidden-import PySide6.QtMultimedia --hidden-import PySide6.QtMultimediaWidgets --clean main.py
 
 if errorlevel 1 (
     echo.
