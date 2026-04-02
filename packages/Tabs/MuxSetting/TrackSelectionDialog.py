@@ -30,13 +30,13 @@ SUBTITLE_LANGUAGES = [
 
 
 class TrackSelectionDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, track_selections=None):
         super().__init__(parent)
         self.setWindowTitle("轨道选择")
         self.setMinimumSize(1000, 600)
         self.resize(1100, 700)
         
-        self.track_selections = {}
+        self.track_selections = track_selections or {}
 
         self.setup_ui()
     
@@ -139,11 +139,33 @@ class TrackSelectionDialog(QDialog):
             external_audios = GlobalSetting.AUDIO_FILES_ABSOLUTE_PATH_LIST.get(video_idx, [])
             external_subs = GlobalSetting.SUBTITLE_FILES_ABSOLUTE_PATH_LIST.get(video_idx, [])
             
+            # 获取之前的轨道选择设置
+            selected_audio = self.track_selections.get('audio', {}).get(video_idx, [])
+            selected_subtitle = self.track_selections.get('subtitle', {}).get(video_idx, [])
+            default_audio = self.track_selections.get('default_audio', {}).get(video_idx, {})
+            default_subtitle = self.track_selections.get('default_subtitle', {}).get(video_idx, {})
+            audio_languages = self.track_selections.get('audio_languages', {}).get(video_idx, {})
+            subtitle_languages = self.track_selections.get('subtitle_languages', {}).get(video_idx, {})
+            
             for track_idx, track in enumerate(audio_tracks):
                 track_id = track.get('id', track_idx)
                 lang = track.get('language', 'und')
                 name = track.get('name', '')
                 is_default = track.get('is_default', False)
+                
+                # 检查是否有之前的设置
+                if video_idx in self.track_selections.get('audio', {}):
+                    is_keep = track_id in selected_audio
+                else:
+                    is_keep = True
+                
+                # 检查是否有之前的默认设置
+                if video_idx in self.track_selections.get('default_audio', {}):
+                    is_default = default_audio.get('idx') == track_idx and not default_audio.get('external', False)
+                
+                # 检查是否有之前的语言设置
+                if video_idx in self.track_selections.get('audio_languages', {}) and track_idx in audio_languages:
+                    lang = audio_languages[track_idx]
                 
                 info = f"#{track_idx}"
                 if name:
@@ -166,7 +188,7 @@ class TrackSelectionDialog(QDialog):
                 )
                 self.tree.setItemWidget(item, 3, lang_widget)
                 
-                keep_widget = self.create_centered_checkbox(True)
+                keep_widget = self.create_centered_checkbox(is_keep)
                 keep_checkbox = keep_widget.findChild(QCheckBox)
                 self.tree.setItemWidget(item, 4, keep_widget)
                 
@@ -187,6 +209,23 @@ class TrackSelectionDialog(QDialog):
                 audio_name = os.path.splitext(os.path.basename(audio_path))[0]
                 info = f"外部 #{ext_idx} {audio_name}"
                 
+                # 检查是否有之前的设置
+                is_keep = True
+                is_default = False
+                ext_key = f"ext_{ext_idx}"
+                
+                if video_idx in self.track_selections.get('external_audio', {}):
+                    is_keep = ext_key in self.track_selections.get('external_audio', {}).get(video_idx, [])
+                
+                # 检查是否有之前的默认设置
+                if video_idx in self.track_selections.get('default_audio', {}):
+                    is_default = default_audio.get('idx') == ext_key and default_audio.get('external', False)
+                
+                # 检查是否有之前的语言设置
+                lang = 'chi'  # 默认语言
+                if video_idx in self.track_selections.get('audio_languages', {}) and ext_key in audio_languages:
+                    lang = audio_languages[ext_key]
+                
                 item = QTreeWidgetItem(self.tree)
                 item.setText(0, "")
                 item.setText(1, "音轨")
@@ -199,33 +238,47 @@ class TrackSelectionDialog(QDialog):
                 
                 lang_widget, lang_combo = self.create_centered_combobox(
                     [lang_name for _, lang_name in AUDIO_LANGUAGES],
-                    0
+                    self.get_lang_index(lang, AUDIO_LANGUAGES)
                 )
                 self.tree.setItemWidget(item, 3, lang_widget)
                 
-                keep_widget = self.create_centered_checkbox(True)
+                keep_widget = self.create_centered_checkbox(is_keep)
                 keep_checkbox = keep_widget.findChild(QCheckBox)
                 self.tree.setItemWidget(item, 4, keep_widget)
                 
-                default_widget = self.create_centered_checkbox(False)
+                default_widget = self.create_centered_checkbox(is_default)
                 default_checkbox = default_widget.findChild(QCheckBox)
                 default_checkbox.setProperty("track_type", "audio")
                 default_checkbox.setProperty("video_idx", video_idx)
-                default_checkbox.setProperty("track_idx", f"ext_{ext_idx}")
+                default_checkbox.setProperty("track_idx", ext_key)
                 default_checkbox.setProperty("is_external", True)
                 default_checkbox.clicked.connect(self.on_default_clicked)
                 self.tree.setItemWidget(item, 5, default_widget)
                 
                 key = ('audio', video_idx, ext_idx, ext_idx, True)
                 self.track_checkboxes[key] = keep_checkbox
-                self.default_checkboxes['audio'][(video_idx, f"ext_{ext_idx}")] = default_checkbox
-                self.language_combos['audio'][(video_idx, f"ext_{ext_idx}")] = lang_combo
+                self.default_checkboxes['audio'][(video_idx, ext_key)] = default_checkbox
+                self.language_combos['audio'][(video_idx, ext_key)] = lang_combo
             
             for track_idx, track in enumerate(subtitle_tracks):
                 track_id = track.get('id', track_idx)
                 lang = track.get('language', 'und')
                 name = track.get('name', '')
                 is_default = track.get('is_default', False)
+                
+                # 检查是否有之前的设置
+                if video_idx in self.track_selections.get('subtitle', {}):
+                    is_keep = track_id in selected_subtitle
+                else:
+                    is_keep = True
+                
+                # 检查是否有之前的默认设置
+                if video_idx in self.track_selections.get('default_subtitle', {}):
+                    is_default = default_subtitle.get('idx') == track_idx and not default_subtitle.get('external', False)
+                
+                # 检查是否有之前的语言设置
+                if video_idx in self.track_selections.get('subtitle_languages', {}) and track_idx in subtitle_languages:
+                    lang = subtitle_languages[track_idx]
                 
                 info = f"#{track_idx}"
                 if name:
@@ -248,7 +301,7 @@ class TrackSelectionDialog(QDialog):
                 )
                 self.tree.setItemWidget(item, 3, lang_widget)
                 
-                keep_widget = self.create_centered_checkbox(True)
+                keep_widget = self.create_centered_checkbox(is_keep)
                 keep_checkbox = keep_widget.findChild(QCheckBox)
                 self.tree.setItemWidget(item, 4, keep_widget)
                 
@@ -269,6 +322,23 @@ class TrackSelectionDialog(QDialog):
                 sub_name = os.path.splitext(os.path.basename(sub_path))[0]
                 info = f"外部 #{ext_idx} {sub_name}"
                 
+                # 检查是否有之前的设置
+                is_keep = True
+                is_default = False
+                ext_key = f"ext_{ext_idx}"
+                
+                if video_idx in self.track_selections.get('external_subtitle', {}):
+                    is_keep = ext_key in self.track_selections.get('external_subtitle', {}).get(video_idx, [])
+                
+                # 检查是否有之前的默认设置
+                if video_idx in self.track_selections.get('default_subtitle', {}):
+                    is_default = default_subtitle.get('idx') == ext_key and default_subtitle.get('external', False)
+                
+                # 检查是否有之前的语言设置
+                lang = 'chi'  # 默认语言
+                if video_idx in self.track_selections.get('subtitle_languages', {}) and ext_key in subtitle_languages:
+                    lang = subtitle_languages[ext_key]
+                
                 item = QTreeWidgetItem(self.tree)
                 item.setText(0, "")
                 item.setText(1, "字幕")
@@ -281,27 +351,27 @@ class TrackSelectionDialog(QDialog):
                 
                 lang_widget, lang_combo = self.create_centered_combobox(
                     [lang_name for _, lang_name in SUBTITLE_LANGUAGES],
-                    0
+                    self.get_lang_index(lang, SUBTITLE_LANGUAGES)
                 )
                 self.tree.setItemWidget(item, 3, lang_widget)
                 
-                keep_widget = self.create_centered_checkbox(True)
+                keep_widget = self.create_centered_checkbox(is_keep)
                 keep_checkbox = keep_widget.findChild(QCheckBox)
                 self.tree.setItemWidget(item, 4, keep_widget)
                 
-                default_widget = self.create_centered_checkbox(False)
+                default_widget = self.create_centered_checkbox(is_default)
                 default_checkbox = default_widget.findChild(QCheckBox)
                 default_checkbox.setProperty("track_type", "subtitle")
                 default_checkbox.setProperty("video_idx", video_idx)
-                default_checkbox.setProperty("track_idx", f"ext_{ext_idx}")
+                default_checkbox.setProperty("track_idx", ext_key)
                 default_checkbox.setProperty("is_external", True)
                 default_checkbox.clicked.connect(self.on_default_clicked)
                 self.tree.setItemWidget(item, 5, default_widget)
                 
                 key = ('subtitle', video_idx, ext_idx, ext_idx, True)
                 self.track_checkboxes[key] = keep_checkbox
-                self.default_checkboxes['subtitle'][(video_idx, f"ext_{ext_idx}")] = default_checkbox
-                self.language_combos['subtitle'][(video_idx, f"ext_{ext_idx}")] = lang_combo
+                self.default_checkboxes['subtitle'][(video_idx, ext_key)] = default_checkbox
+                self.language_combos['subtitle'][(video_idx, ext_key)] = lang_combo
     
     def get_lang_index(self, lang, lang_list):
         for i, (lang_code, _) in enumerate(lang_list):

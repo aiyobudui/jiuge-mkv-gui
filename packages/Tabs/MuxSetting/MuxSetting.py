@@ -201,7 +201,8 @@ class MuxSettingTab(QWidget):
         if not GlobalSetting.VIDEO_FILES_LIST:
             QMessageBox.warning(self, "警告", "请先添加视频文件")
             return
-        dialog = TrackSelectionDialog(self)
+        # 传递之前的轨道选择设置
+        dialog = TrackSelectionDialog(self, self.track_selections)
         if dialog.exec():
             selections = dialog.get_selections()
             self.track_selections['audio'] = selections['audio']
@@ -229,7 +230,14 @@ class MuxSettingTab(QWidget):
                 QMessageBox.warning(self, "警告", f"视频文件不存在: {video_path}")
                 return
             
-            dialog = VideoPreviewDialog(video_path, self)
+            # 获取之前的切割设置（如果有）
+            cut_times = ""
+            if self.video_cut_selections:
+                # 使用第一个视频的切割设置作为参考
+                first_video_index = next(iter(self.video_cut_selections.keys()))
+                cut_times = self.video_cut_selections[first_video_index]
+            
+            dialog = VideoPreviewDialog(video_path, cut_times, self)
             if dialog.exec():
                 cut_times = dialog.get_cut_times()
                 if cut_times:
@@ -239,9 +247,7 @@ class MuxSettingTab(QWidget):
                 else:
                     # 没有设置切割时间，清除设置
                     self.video_cut_selections.clear()
-            else:
-                # 取消时清除切割设置
-                self.video_cut_selections.clear()
+            # 不再在取消时清除切割设置，保持之前的设置
         except Exception as e:
             QMessageBox.warning(self, "错误", f"打开视频预览对话框失败: {str(e)}")
     
@@ -363,7 +369,7 @@ class MuxSettingTab(QWidget):
             QMessageBox.warning(self, "警告", "请先在视频选项卡中添加视频文件")
             return
         
-        self.update_track_menus()
+        # 不再重置轨道选择设置，保留用户之前的设置
         
         self.task_table.setRowCount(0)
         self.task_video_indices = []
@@ -461,10 +467,12 @@ class MuxSettingTab(QWidget):
                 if self.abort_on_error_check.isChecked() and has_error[0]:
                     break
                 
-                video_path = GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST[i]
-                video_name = GlobalSetting.VIDEO_FILES_LIST[i]
+                # 使用 task_video_indices 中的原始视频索引
+                original_video_index = self.task_video_indices[i]
+                video_path = GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST[original_video_index]
+                video_name = GlobalSetting.VIDEO_FILES_LIST[original_video_index]
                 output_path = self.get_output_path(video_path)
-                args = self.build_mkvmerge_args(i, video_path, output_path)
+                args = self.build_mkvmerge_args(original_video_index, video_path, output_path)
                 
                 future = executor.submit(self.process_single_task, i, args, video_name)
                 futures[future] = i
@@ -516,15 +524,52 @@ class MuxSettingTab(QWidget):
             success = result.returncode in [0, 1]
             output_path = args[1]
             
-            if success and os.path.exists(output_path):
-                if self.add_crc_check.isChecked():
-                    crc = self.calculate_crc32(output_path)
-                    if crc:
-                        new_path = self.add_crc_to_filename(output_path, crc)
-                        if new_path != output_path:
-                            output_path = new_path
-                
-                output_size = get_readable_filesize(os.path.getsize(output_path))
+            # 检查是否使用了切割功能
+            is_split = any('--split' in arg for arg in args)
+            
+            if success:
+                if is_split:
+                    # 对于切割功能，检查是否生成了任何输出文件
+                    output_dir = os.path.dirname(output_path)
+                    output_name = os.path.basename(output_path)
+                    name_without_ext, ext = os.path.splitext(output_name)
+                    ext = ext[1:] if ext else ''
+                    
+                    # 查找匹配的切割输出文件，考虑不同的命名格式
+                    import glob
+                    # 尝试多种可能的切割文件命名格式
+                    patterns = [
+                        f"{name_without_ext}-*.{ext}",
+                        f"{name_without_ext}*.{ext}",
+                        f"*{os.path.splitext(output_name)[0]}*.{ext}"
+                    ]
+                    
+                    split_files = []
+                    for pattern in patterns:
+                        split_files.extend(glob.glob(os.path.join(output_dir, pattern)))
+                    
+                    # 去重并按文件名排序
+                    split_files = sorted(list(set(split_files)))
+                    
+                    if split_files:
+                        # 计算所有切割文件的总大小
+                        total_size = sum(os.path.getsize(f) for f in split_files)
+                        output_size = get_readable_filesize(total_size)
+                    else:
+                        output_size = "-"
+                else:
+                    # 正常情况，检查原始输出路径
+                    if os.path.exists(output_path):
+                        if self.add_crc_check.isChecked():
+                            crc = self.calculate_crc32(output_path)
+                            if crc:
+                                new_path = self.add_crc_to_filename(output_path, crc)
+                                if new_path != output_path:
+                                    output_path = new_path
+                        
+                        output_size = get_readable_filesize(os.path.getsize(output_path))
+                    else:
+                        output_size = "-"
             else:
                 output_size = "-"
             
@@ -559,15 +604,8 @@ class MuxSettingTab(QWidget):
         if video_index in self.video_cut_selections:
             cut_times = self.video_cut_selections[video_index]
             if cut_times:
-                # 解析时间格式并添加切割参数
-                parts = cut_times.split(',')
-                split_parts = []
-                for part in parts:
-                    start, end = part.split('-')
-                    # 确保时间格式正确（mkvmerge 支持 HH:MM:SS.fff 格式）
-                    split_parts.append(f'{start},{end}')
-                split_param = ','.join(split_parts)
-                args.extend(['--split', f'parts:{split_param}'])
+                # 直接使用 cut_times 作为切割参数，格式已经是正确的 start1-end1,start2-end2 格式
+                args.extend(['--split', f'parts:{cut_times}'])
         
         selected_audio = self.get_selected_audio_tracks()
         if video_index in selected_audio:
@@ -832,7 +870,7 @@ class VideoCutDialog(QDialog):
 
 
 class VideoPreviewDialog(QDialog):
-    def __init__(self, video_path, parent=None):
+    def __init__(self, video_path, cut_times="", parent=None):
         super().__init__(parent)
         self.setWindowTitle("视频切割 - 可视化预览精准取点")
         self.setMinimumWidth(1100)
@@ -843,8 +881,13 @@ class VideoPreviewDialog(QDialog):
         self.is_muted = False  # 标记是否静音
         self.cut_segments = []  # 切割段列表，每个元素为 (start_time, end_time)
         self.current_segment_start = None  # 当前正在设置的段的开始时间
+        self.last_update_time = 0  # 上次更新时间，用于限制更新频率
+        self.update_interval = 100  # 更新间隔，单位毫秒
         self.setup_ui()
         self.load_video()
+        # 加载之前的切割设置
+        if cut_times:
+            self.load_cut_times(cut_times)
     
     def setup_ui(self):
         main_layout = QVBoxLayout()
@@ -994,27 +1037,32 @@ class VideoPreviewDialog(QDialog):
         self.progress_bar.sliderReleased.connect(self.on_progress_slider_released)
         self.progress_bar.sliderMoved.connect(self.on_progress_slider_moved)
         
-        # 为所有控件安装事件过滤器，确保空格键总是控制播放/暂停
+        # 为所有按钮添加点击事件，使它们在点击后将焦点返回进度条
+        def set_focus_to_progress_bar():
+            self.progress_bar.setFocus()
+        
+        buttons = [
+            self.play_button, self.pause_button, self.stop_button, self.mute_button,
+            self.prev_frame_button, self.next_frame_button, self.mark_in_button,
+            self.mark_out_button, self.add_segment_button, self.remove_segment_button,
+            self.clear_segments_button, self.help_button, self.ok_button, self.cancel_button
+        ]
+        for button in buttons:
+            button.clicked.connect(set_focus_to_progress_bar)
+        
+        # 为输入框添加焦点丢失事件，使它们在失去焦点后将焦点返回进度条
+        def return_focus_to_progress_bar():
+            # 延迟一点时间，确保事件处理完成
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(100, self.progress_bar.setFocus)
+        
+        self.in_point_edit.editingFinished.connect(return_focus_to_progress_bar)
+        self.out_point_edit.editingFinished.connect(return_focus_to_progress_bar)
+        
+        # 只为关键控件安装事件过滤器，确保空格键总是控制播放/暂停
         self.installEventFilter(self)
         self.video_widget.installEventFilter(self)
-        self.play_button.installEventFilter(self)
-        self.pause_button.installEventFilter(self)
-        self.stop_button.installEventFilter(self)
-        self.mute_button.installEventFilter(self)
-        self.prev_frame_button.installEventFilter(self)
-        self.next_frame_button.installEventFilter(self)
-        self.mark_in_button.installEventFilter(self)
-        self.mark_out_button.installEventFilter(self)
-        self.add_segment_button.installEventFilter(self)
-        self.remove_segment_button.installEventFilter(self)
-        self.clear_segments_button.installEventFilter(self)
-        self.help_button.installEventFilter(self)
-        self.ok_button.installEventFilter(self)
-        self.cancel_button.installEventFilter(self)
-        self.in_point_edit.installEventFilter(self)
-        self.out_point_edit.installEventFilter(self)
         self.progress_bar.installEventFilter(self)
-        self.time_label.installEventFilter(self)
     
     def load_video(self):
         try:
@@ -1024,12 +1072,20 @@ class VideoPreviewDialog(QDialog):
             self.audio_output = QAudioOutput()
             self.player.setAudioOutput(self.audio_output)
             
+            # 优化视频播放性能
+            self.player.setPlaybackRate(1.0)  # 确保播放速率正常
+            
             # 使用 setSource 方法加载视频（PySide6 6.10+）
             self.player.setSource(QUrl.fromLocalFile(self.video_path))
             
+            # 连接信号
             self.player.durationChanged.connect(self.on_duration_changed)
             self.player.positionChanged.connect(self.on_position_changed)
             # 移除 videoAvailableChanged 信号连接，因为在当前 PySide6 版本中不可用
+            
+            # 优化缓存设置，减少延迟
+            # 注意：QMediaPlayer 没有直接的缓存设置 API，它使用系统默认设置
+            # 我们可以通过其他方式优化响应速度
         except Exception as e:
             # 视频加载失败时，显示错误信息但仍允许对话框打开
             error_label = QLabel(f"视频加载失败: {str(e)}")
@@ -1076,13 +1132,29 @@ class VideoPreviewDialog(QDialog):
         # 逐帧后退（这里使用10ms作为一帧的近似值）
         current_pos = self.player.position()
         new_pos = max(0, current_pos - 10)
+        # 保存当前播放状态
+        was_playing = self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
+        # 暂停视频以确保画面更新
+        self.player.pause()
+        # 设置新位置
         self.player.setPosition(new_pos)
+        # 恢复之前的播放状态
+        if was_playing:
+            self.player.play()
     
     def next_frame(self):
         # 逐帧前进（这里使用10ms作为一帧的近似值）
         current_pos = self.player.position()
         new_pos = min(self.player.duration(), current_pos + 10)
+        # 保存当前播放状态
+        was_playing = self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
+        # 暂停视频以确保画面更新
+        self.player.pause()
+        # 设置新位置
         self.player.setPosition(new_pos)
+        # 恢复之前的播放状态
+        if was_playing:
+            self.player.play()
     
     def mark_start_point(self):
         current_pos = self.player.position()
@@ -1174,11 +1246,14 @@ class VideoPreviewDialog(QDialog):
         self.duration = duration
     
     def on_position_changed(self, position):
-        self.time_label.setText(self.format_time(position))
-        # 更新进度条位置，但在拖拽时不更新
-        if self.duration > 0 and not self.is_dragging:
-            progress = int((position / self.duration) * 1000)
-            self.progress_bar.setValue(progress)
+        # 限制更新频率，避免过于频繁的UI更新导致卡顿
+        if position - self.last_update_time >= self.update_interval or position < self.last_update_time:
+            self.last_update_time = position
+            self.time_label.setText(self.format_time(position))
+            # 更新进度条位置，但在拖拽时不更新
+            if self.duration > 0 and not self.is_dragging:
+                progress = int((position / self.duration) * 1000)
+                self.progress_bar.setValue(progress)
     
     def on_progress_slider_pressed(self):
         # 进度条开始拖拽
@@ -1193,11 +1268,20 @@ class VideoPreviewDialog(QDialog):
         self.is_dragging = False
     
     def on_progress_slider_moved(self, value):
-        # 进度条拖拽过程中更新时间显示
+        # 进度条拖拽过程中更新时间显示和视频画面
         if self.duration > 0:
             progress = value / 1000
             position = int(progress * self.duration)
+            # 暂停视频以确保画面更新
+            was_playing = self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
+            self.player.pause()
+            # 设置新位置
+            self.player.setPosition(position)
+            # 更新时间显示
             self.time_label.setText(self.format_time(position))
+            # 恢复之前的播放状态
+            if was_playing:
+                self.player.play()
     
     def get_cut_times(self):
         # 从切割段列表中获取切割时间
@@ -1214,6 +1298,22 @@ class VideoPreviewDialog(QDialog):
         if in_point and out_point:
             return f"{in_point}-{out_point}"
         return ""
+    
+    def load_cut_times(self, cut_times):
+        # 解析并加载之前的切割设置
+        if cut_times:
+            # 分割多个切割段
+            segments = cut_times.split(",")
+            for segment in segments:
+                # 分割开始和结束时间
+                if "-" in segment:
+                    start, end = segment.split("-")
+                    # 验证时间格式
+                    if self.validate_time_format(start) and self.validate_time_format(end):
+                        # 添加到切割段列表
+                        self.cut_segments.append((start, end))
+            # 更新切割段列表显示
+            self.update_segments_list()
     
     def keyPressEvent(self, event):
         # 支持空格键播放/暂停
@@ -1234,9 +1334,11 @@ class VideoPreviewDialog(QDialog):
         super().focusInEvent(event)
     
     def showEvent(self, event):
-        # 确保对话框获得焦点
+        # 确保对话框获得焦点，并且进度条获得焦点
         super().showEvent(event)
-        self.setFocus()
+        # 延迟一点时间，确保界面完全加载
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(100, self.progress_bar.setFocus)
     
     def eventFilter(self, obj, event):
         # 捕获所有控件的键盘事件
@@ -1247,30 +1349,104 @@ class VideoPreviewDialog(QDialog):
                     self.pause_video()
                 else:
                     self.play_video()
+                # 确保焦点回到进度条
+                self.progress_bar.setFocus()
                 event.accept()
                 return True
             elif event.key() == Qt.Key_Left:
                 # 左箭头：向后一秒
                 current_pos = self.player.position()
                 new_pos = max(0, current_pos - 1000)  # 1000ms = 1秒
+                # 保存当前播放状态
+                was_playing = self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
+                # 暂停视频以确保画面更新
+                self.player.pause()
+                # 设置新位置
                 self.player.setPosition(new_pos)
+                # 立即更新时间显示
+                self.time_label.setText(self.format_time(new_pos))
+                # 立即更新进度条
+                if self.duration > 0 and not self.is_dragging:
+                    progress = int((new_pos / self.duration) * 1000)
+                    self.progress_bar.setValue(progress)
+                # 恢复之前的播放状态
+                if was_playing:
+                    self.player.play()
+                # 确保焦点回到进度条
+                self.progress_bar.setFocus()
+                # 立即处理事件，提高响应速度
                 event.accept()
                 return True
             elif event.key() == Qt.Key_Right:
                 # 右箭头：前进一秒
                 current_pos = self.player.position()
                 new_pos = min(self.player.duration(), current_pos + 1000)  # 1000ms = 1秒
+                # 保存当前播放状态
+                was_playing = self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
+                # 暂停视频以确保画面更新
+                self.player.pause()
+                # 设置新位置
                 self.player.setPosition(new_pos)
+                # 立即更新时间显示
+                self.time_label.setText(self.format_time(new_pos))
+                # 立即更新进度条
+                if self.duration > 0 and not self.is_dragging:
+                    progress = int((new_pos / self.duration) * 1000)
+                    self.progress_bar.setValue(progress)
+                # 恢复之前的播放状态
+                if was_playing:
+                    self.player.play()
+                # 确保焦点回到进度条
+                self.progress_bar.setFocus()
+                # 立即处理事件，提高响应速度
                 event.accept()
                 return True
             elif event.key() == Qt.Key_Up:
                 # 上箭头：上1帧
-                self.prev_frame()
+                current_pos = self.player.position()
+                new_pos = max(0, current_pos - 10)
+                # 保存当前播放状态
+                was_playing = self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
+                # 暂停视频以确保画面更新
+                self.player.pause()
+                # 设置新位置
+                self.player.setPosition(new_pos)
+                # 立即更新时间显示
+                self.time_label.setText(self.format_time(new_pos))
+                # 立即更新进度条
+                if self.duration > 0 and not self.is_dragging:
+                    progress = int((new_pos / self.duration) * 1000)
+                    self.progress_bar.setValue(progress)
+                # 恢复之前的播放状态
+                if was_playing:
+                    self.player.play()
+                # 确保焦点回到进度条
+                self.progress_bar.setFocus()
+                # 立即处理事件，提高响应速度
                 event.accept()
                 return True
             elif event.key() == Qt.Key_Down:
                 # 下箭头：下1帧
-                self.next_frame()
+                current_pos = self.player.position()
+                new_pos = min(self.player.duration(), current_pos + 10)
+                # 保存当前播放状态
+                was_playing = self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
+                # 暂停视频以确保画面更新
+                self.player.pause()
+                # 设置新位置
+                self.player.setPosition(new_pos)
+                # 立即更新时间显示
+                self.time_label.setText(self.format_time(new_pos))
+                # 立即更新进度条
+                if self.duration > 0 and not self.is_dragging:
+                    progress = int((new_pos / self.duration) * 1000)
+                    self.progress_bar.setValue(progress)
+                # 恢复之前的播放状态
+                if was_playing:
+                    self.player.play()
+                # 确保焦点回到进度条
+                self.progress_bar.setFocus()
+                # 立即处理事件，提高响应速度
                 event.accept()
                 return True
         return super().eventFilter(obj, event)
