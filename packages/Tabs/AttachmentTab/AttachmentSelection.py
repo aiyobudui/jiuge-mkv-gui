@@ -133,7 +133,7 @@ class AttachmentSelectionSetting(QWidget):
         source_group.setLayout(source_layout)
         main_layout.addWidget(source_group)
         
-        match_group = QGroupBox("附件匹配（按序号一一对应）")
+        match_group = QGroupBox("附件匹配")
         match_layout = QHBoxLayout()
         
         video_table_widget = QWidget()
@@ -222,7 +222,7 @@ class AttachmentSelectionSetting(QWidget):
         match_group.setLayout(match_layout)
         main_layout.addWidget(match_group)
         
-        info_label = QLabel("提示：附件按序号一一对应添加到视频（第1个附件→第1个视频，以此类推）")
+        info_label = QLabel("提示：附件将添加到所有视频文件中")
         info_label.setStyleSheet("color: gray;")
         main_layout.addWidget(info_label)
         
@@ -404,11 +404,12 @@ class AttachmentSelectionSetting(QWidget):
     def auto_match_by_index(self):
         GlobalSetting.ATTACHMENT_FILES_ABSOLUTE_PATH_LIST.clear()
         
-        for display_idx, video_idx in enumerate(GlobalSetting.VIDEO_SELECTED_INDICES):
-            if display_idx < len(self.attachment_files):
-                attachment_path = self.attachment_files[display_idx]
-                if video_idx not in GlobalSetting.ATTACHMENT_FILES_ABSOLUTE_PATH_LIST:
-                    GlobalSetting.ATTACHMENT_FILES_ABSOLUTE_PATH_LIST[video_idx] = []
+        # 将所有附件添加到所有视频文件中
+        for video_idx in GlobalSetting.VIDEO_SELECTED_INDICES:
+            if video_idx not in GlobalSetting.ATTACHMENT_FILES_ABSOLUTE_PATH_LIST:
+                GlobalSetting.ATTACHMENT_FILES_ABSOLUTE_PATH_LIST[video_idx] = []
+            # 添加所有附件到当前视频
+            for attachment_path in self.attachment_files:
                 GlobalSetting.ATTACHMENT_FILES_ABSOLUTE_PATH_LIST[video_idx].append(attachment_path)
         
         if self.attachment_files:

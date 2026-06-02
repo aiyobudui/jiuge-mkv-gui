@@ -27,6 +27,7 @@ class MuxSettingTab(QWidget):
     start_muxing_signal = Signal()
     update_task_bar_progress_signal = Signal(int)
     update_task_signal = Signal(int, str, str, str)
+    update_task_progress_signal = Signal(int, int)
     update_progress_signal = Signal(int, str)
     muxing_finished_signal = Signal()
     
@@ -49,6 +50,8 @@ class MuxSettingTab(QWidget):
         self.stop_requested = False
         self.completed_count = 0
         self.count_lock = threading.Lock()
+        self.task_progress = {}  # 存储每个任务的进度 (task_index -> progress)
+        self.task_progress_lock = threading.Lock()
     
     def setup_ui(self):
         main_layout = QVBoxLayout()
@@ -191,6 +194,7 @@ class MuxSettingTab(QWidget):
         self.start_button.clicked.connect(self.toggle_muxing)
         
         self.update_task_signal.connect(self.on_update_task)
+        self.update_task_progress_signal.connect(self.on_update_task_progress)
         self.update_progress_signal.connect(self.on_update_progress)
         self.muxing_finished_signal.connect(self.on_muxing_finished)
         
@@ -256,6 +260,33 @@ class MuxSettingTab(QWidget):
             self.task_table.setItem(row, 1, QTableWidgetItem(status))
             self.task_table.setItem(row, 3, QTableWidgetItem(progress))
             self.task_table.setItem(row, 4, QTableWidgetItem(output_size))
+    
+    def on_update_task_progress(self, task_index, progress):
+        # 更新任务列表中的进度
+        if task_index < self.task_table.rowCount():
+            self.task_table.setItem(task_index, 3, QTableWidgetItem(f"{progress}%"))
+        
+        # 更新任务进度字典
+        with self.task_progress_lock:
+            self.task_progress[task_index] = progress
+        
+        # 计算总进度
+        self.calculate_and_update_total_progress()
+    
+    def calculate_and_update_total_progress(self):
+        total_tasks = self.total_tasks
+        if total_tasks == 0:
+            return
+        
+        # 计算所有任务的平均进度
+        with self.task_progress_lock:
+            sum_progress = sum(self.task_progress.get(i, 0) for i in range(total_tasks))
+        
+        total_progress = int(sum_progress / total_tasks)
+        with self.count_lock:
+            completed = self.completed_count
+        
+        self.update_progress_signal.emit(total_progress, f"正在处理 {completed}/{total_tasks}")
     
     def on_update_progress(self, progress, text):
         self.total_progress_bar.setMaximum(100)
@@ -373,6 +404,7 @@ class MuxSettingTab(QWidget):
         
         self.task_table.setRowCount(0)
         self.task_video_indices = []
+        self.task_progress = {}  # 重置任务进度字典
         
         for video_idx in GlobalSetting.VIDEO_SELECTED_INDICES:
             if video_idx < len(GlobalSetting.VIDEO_FILES_LIST):
@@ -387,6 +419,7 @@ class MuxSettingTab(QWidget):
                 self.task_table.setItem(row, 3, QTableWidgetItem("0%"))
                 self.task_table.setItem(row, 4, QTableWidgetItem("-"))
                 self.task_video_indices.append(video_idx)
+                self.task_progress[row] = 0  # 初始化任务进度为 0%
         
         self.total_tasks = self.task_table.rowCount()
         self.completed_count = 0
@@ -444,6 +477,11 @@ class MuxSettingTab(QWidget):
         self.stop_requested = False
         self.completed_count = 0
         
+        # 重置任务进度字典
+        with self.task_progress_lock:
+            for i in range(self.total_tasks):
+                self.task_progress[i] = 0
+        
         self.start_muxing_signal.emit()
         
         thread_count = 4
@@ -455,8 +493,6 @@ class MuxSettingTab(QWidget):
         self.update_progress_signal.emit(0, f"正在处理 0/{total_tasks}")
         
         futures = {}
-        completed = [0]
-        lock = threading.Lock()
         has_error = [False]
         
         with ThreadPoolExecutor(max_workers=thread_count) as executor:
@@ -492,10 +528,9 @@ class MuxSettingTab(QWidget):
                     if self.abort_on_error_check.isChecked():
                         has_error[0] = True
                 
-                with lock:
-                    completed[0] += 1
-                progress = int((completed[0] / total_tasks) * 100)
-                self.update_progress_signal.emit(progress, f"正在处理 {completed[0]}/{total_tasks}")
+                # 更新完成的任务计数
+                with self.count_lock:
+                    self.completed_count += 1
         
         if not self.stop_requested:
             self.muxing_finished_signal.emit()
@@ -506,22 +541,49 @@ class MuxSettingTab(QWidget):
         self.set_button_state(is_muxing=False)
     
     def process_single_task(self, task_index, args, video_name):
-        self.update_task_signal.emit(task_index, "执行中", "50%", "-")
+        self.update_task_signal.emit(task_index, "执行中", "0%", "-")
+        self.update_task_progress_signal.emit(task_index, 0)
+        
+        stdout_text = ""
+        stderr_text = ""
         
         try:
             env = os.environ.copy()
             env['PYTHONIOENCODING'] = 'utf-8'
             
-            result = subprocess.run(
+            # 使用 Popen 实时读取输出
+            process = subprocess.Popen(
                 [Options.Mkvmerge_Path] + args,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 encoding='utf-8',
                 errors='replace',
                 creationflags=subprocess.CREATE_NO_WINDOW,
                 env=env
             )
             
-            success = result.returncode in [0, 1]
+            # 实时读取输出并解析进度
+            last_progress = 0
+            if process.stdout:
+                for line in process.stdout:
+                    stdout_text += line
+                    # 解析 mkvmerge 的进度信息（格式通常是 "Progress: X%"）
+                    progress = self.parse_mkvmerge_progress(line)
+                    if progress is not None and progress != last_progress:
+                        last_progress = progress
+                        self.update_task_progress_signal.emit(task_index, progress)
+            
+            # 读取剩余的错误输出
+            if process.stderr:
+                stderr_text = process.stderr.read()
+            
+            # 等待进程结束
+            return_code = process.wait()
+            success = return_code in [0, 1]
+            
+            # 任务完成，设置进度为 100%
+            self.update_task_progress_signal.emit(task_index, 100)
+            
             output_path = args[1]
             
             # 检查是否使用了切割功能
@@ -573,11 +635,34 @@ class MuxSettingTab(QWidget):
             else:
                 output_size = "-"
             
-            self.save_log_file(video_name, result.stdout, result.stderr, success)
+            self.save_log_file(video_name, stdout_text, stderr_text, success)
             
-            return success, output_size, result.returncode
+            return success, output_size, return_code
         except Exception:
             return False, "-", -1
+    
+    def parse_mkvmerge_progress(self, line):
+        """解析 mkvmerge 输出中的进度信息"""
+        import re
+        # mkvmerge --gui-mode 输出格式是 "#GUI#progress X"
+        # 同时也尝试匹配普通模式的格式
+        patterns = [
+            r'#GUI#progress\s+(\d+)',
+            r'Progress:\s*(\d+)%',
+            r'(\d+)%',
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, line)
+            if match:
+                try:
+                    progress = int(match.group(1))
+                    if 0 <= progress <= 100:
+                        return progress
+                except ValueError:
+                    pass
+        
+        return None
     
     def get_output_path(self, video_path):
         output_dir = self.output_path_edit.text()
@@ -598,7 +683,7 @@ class MuxSettingTab(QWidget):
             return video_path
     
     def build_mkvmerge_args(self, video_index, video_path, output_path):
-        args = ['-o', output_path]
+        args = ['--gui-mode', '-o', output_path]
         
         # 添加视频切割参数
         if video_index in self.video_cut_selections:
@@ -1166,6 +1251,8 @@ class VideoPreviewDialog(QDialog):
         current_pos = self.player.position()
         end_time = self.format_time(current_pos)
         self.out_point_edit.setText(end_time)
+        # 自动将当前切割点添加到切割段列表
+        self.add_segment()
     
     def add_segment(self):
         start_time = self.in_point_edit.text().strip()
@@ -1291,12 +1378,7 @@ class VideoPreviewDialog(QDialog):
                 segments_str.append(f"{start}-{end}")
             return ",".join(segments_str)
         
-        # 如果没有添加切割段，尝试从输入框获取
-        in_point = self.in_point_edit.text().strip()
-        out_point = self.out_point_edit.text().strip()
-        
-        if in_point and out_point:
-            return f"{in_point}-{out_point}"
+        # 如果切割段列表为空，直接返回空字符串，不进行视频切割
         return ""
     
     def load_cut_times(self, cut_times):
