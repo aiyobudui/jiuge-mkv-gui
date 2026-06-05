@@ -12,7 +12,7 @@ from packages.MainWindow import MainWindow
 
 if sys.platform == "win32":
     import ctypes
-    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("jiuge.mkv.gui")
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("jiuge.mkv.muxer.gui")
 
 window: MainWindow
 app: QApplication

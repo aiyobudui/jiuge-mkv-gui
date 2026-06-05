@@ -10,7 +10,7 @@ echo.
 cd /d "%~dp0"
 
 echo [Step 1/8] Closing running program...
-taskkill /f /im jiuge-mkv-gui.exe >nul 2>&1
+taskkill /f /im "JiuGe MKV Muxer GUI.exe" >nul 2>&1
 echo     Done!
 
 echo.
@@ -59,7 +59,7 @@ echo.
 echo [Step 7/9] Building EXE...
 echo.
 
-python -m PyInstaller --windowed --name "jiuge-mkv-gui" --icon="Resources\Icons\App.ico" --add-data "Resources;Resources" --hidden-import PySide6.QtMultimedia --hidden-import PySide6.QtMultimediaWidgets --clean main.py
+python -m PyInstaller --windowed --name "JiuGe MKV Muxer GUI" --icon="Resources\Icons\App.ico" --add-data "Resources;Resources" --hidden-import PySide6.QtMultimedia --hidden-import PySide6.QtMultimediaWidgets --clean main.py
 
 if errorlevel 1 (
     echo.
@@ -70,21 +70,21 @@ if errorlevel 1 (
 
 echo.
 echo [Step 7/8] Copying additional files...
-if not exist "dist\jiuge-mkv-gui\Resources\Icons" mkdir "dist\jiuge-mkv-gui\Resources\Icons"
-xcopy /Y /Q "Resources\Icons\*.*" "dist\jiuge-mkv-gui\Resources\Icons\"
+if not exist "dist\JiuGe MKV Muxer GUI\Resources\Icons" mkdir "dist\JiuGe MKV Muxer GUI\Resources\Icons"
+xcopy /Y /Q "Resources\Icons\*.*" "dist\JiuGe MKV Muxer GUI\Resources\Icons\"
 echo     Done!
 
 echo.
 echo [Step 8/8] Cleaning build temp files...
 if exist build rmdir /s /q build 2>nul
-del /q jiuge-mkv-gui.spec 2>nul
+del /q "JiuGe MKV Muxer GUI.spec" 2>nul
 
 echo.
 echo ========================================
 echo          Build Success!
 echo ========================================
 echo.
-echo Output: %~dp0dist\jiuge-mkv-gui\
+echo Output: %~dp0dist\JiuGe MKV Muxer GUI\
 echo.
 
 pause

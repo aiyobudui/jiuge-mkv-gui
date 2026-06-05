@@ -5,7 +5,8 @@ from PySide6.QtGui import QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, 
     QPushButton, QComboBox, QTableWidget, QTableWidgetItem,
-    QHeaderView, QFileDialog, QGroupBox, QMessageBox, QFrame, QGraphicsOpacityEffect
+    QHeaderView, QFileDialog, QGroupBox, QMessageBox, QFrame, QGraphicsOpacityEffect,
+    QCheckBox
 )
 
 from packages.Startup import GlobalIcons
@@ -222,9 +223,18 @@ class AttachmentSelectionSetting(QWidget):
         match_group.setLayout(match_layout)
         main_layout.addWidget(match_group)
         
+        option_layout = QHBoxLayout()
+        
+        self.replace_attachment_check = QCheckBox("清除原附件")
+        self.replace_attachment_check.setChecked(True)  # 默认勾选
+        self.replace_attachment_check.setToolTip("勾选后将清除视频文件中原有的附件，只保留用户添加的附件")
+        option_layout.addWidget(self.replace_attachment_check)
+        
         info_label = QLabel("提示：附件将添加到所有视频文件中")
         info_label.setStyleSheet("color: gray;")
-        main_layout.addWidget(info_label)
+        option_layout.addWidget(info_label)
+        
+        main_layout.addLayout(option_layout)
         
         self.setLayout(main_layout)
     
@@ -411,6 +421,9 @@ class AttachmentSelectionSetting(QWidget):
             # 添加所有附件到当前视频
             for attachment_path in self.attachment_files:
                 GlobalSetting.ATTACHMENT_FILES_ABSOLUTE_PATH_LIST[video_idx].append(attachment_path)
+        
+        # 设置是否清除原有附件
+        GlobalSetting.ATTACHMENT_REPLACE_EXISTING = self.replace_attachment_check.isChecked()
         
         if self.attachment_files:
             GlobalSetting.ATTACHMENT_ENABLED = True

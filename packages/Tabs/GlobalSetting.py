@@ -38,6 +38,7 @@ class GlobalSetting(QWidget):
     
     ATTACHMENT_ENABLED = False
     ATTACHMENT_FILES_ABSOLUTE_PATH_LIST = {}
+    ATTACHMENT_REPLACE_EXISTING = False  # 是否替换原有的附件
     
     DESTINATION_FOLDER_PATH = ""
     

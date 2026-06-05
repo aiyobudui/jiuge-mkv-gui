@@ -115,6 +115,12 @@ class MuxSettingTab(QWidget):
         self.abort_on_error_check.setChecked(True)
         options_layout.addWidget(self.abort_on_error_check)
         
+        options_layout.addWidget(QLabel("视频标题："))
+        self.title_edit = QLineEdit()
+        self.title_edit.setPlaceholderText("设置视频内标题（留空则清空）")
+        self.title_edit.setFixedWidth(250)
+        options_layout.addWidget(self.title_edit)
+        
         options_layout.addStretch()
         
         self.video_cut_button = QPushButton("视频切割")
@@ -257,14 +263,24 @@ class MuxSettingTab(QWidget):
     
     def on_update_task(self, row, status, progress, output_size):
         if row < self.task_table.rowCount():
-            self.task_table.setItem(row, 1, QTableWidgetItem(status))
-            self.task_table.setItem(row, 3, QTableWidgetItem(progress))
-            self.task_table.setItem(row, 4, QTableWidgetItem(output_size))
+            status_item = QTableWidgetItem(status)
+            status_item.setTextAlignment(Qt.AlignCenter)
+            self.task_table.setItem(row, 1, status_item)
+            
+            progress_item = QTableWidgetItem(progress)
+            progress_item.setTextAlignment(Qt.AlignCenter)
+            self.task_table.setItem(row, 3, progress_item)
+            
+            output_size_item = QTableWidgetItem(output_size)
+            output_size_item.setTextAlignment(Qt.AlignCenter)
+            self.task_table.setItem(row, 4, output_size_item)
     
     def on_update_task_progress(self, task_index, progress):
         # 更新任务列表中的进度
         if task_index < self.task_table.rowCount():
-            self.task_table.setItem(task_index, 3, QTableWidgetItem(f"{progress}%"))
+            progress_item = QTableWidgetItem(f"{progress}%")
+            progress_item.setTextAlignment(Qt.AlignCenter)
+            self.task_table.setItem(task_index, 3, progress_item)
         
         # 更新任务进度字典
         with self.task_progress_lock:
@@ -327,7 +343,12 @@ class MuxSettingTab(QWidget):
             self.start_muxing()
     
     def browse_output_folder(self):
-        folder = QFileDialog.getExistingDirectory(self, "选择输出文件夹")
+        # 默认打开视频源的路径
+        default_dir = ""
+        if GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST:
+            default_dir = os.path.dirname(GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST[0])
+        
+        folder = QFileDialog.getExistingDirectory(self, "选择输出文件夹", default_dir)
         if folder:
             self.output_path_edit.setText(folder)
     
@@ -414,10 +435,22 @@ class MuxSettingTab(QWidget):
                 row = self.task_table.rowCount()
                 self.task_table.insertRow(row)
                 self.task_table.setItem(row, 0, QTableWidgetItem(video_name))
-                self.task_table.setItem(row, 1, QTableWidgetItem("等待中"))
-                self.task_table.setItem(row, 2, QTableWidgetItem(video_size))
-                self.task_table.setItem(row, 3, QTableWidgetItem("0%"))
-                self.task_table.setItem(row, 4, QTableWidgetItem("-"))
+                
+                status_item = QTableWidgetItem("等待中")
+                status_item.setTextAlignment(Qt.AlignCenter)
+                self.task_table.setItem(row, 1, status_item)
+                
+                size_item = QTableWidgetItem(video_size)
+                size_item.setTextAlignment(Qt.AlignCenter)
+                self.task_table.setItem(row, 2, size_item)
+                
+                progress_item = QTableWidgetItem("0%")
+                progress_item.setTextAlignment(Qt.AlignCenter)
+                self.task_table.setItem(row, 3, progress_item)
+                
+                output_size_item = QTableWidgetItem("-")
+                output_size_item.setTextAlignment(Qt.AlignCenter)
+                self.task_table.setItem(row, 4, output_size_item)
                 self.task_video_indices.append(video_idx)
                 self.task_progress[row] = 0  # 初始化任务进度为 0%
         
@@ -584,7 +617,7 @@ class MuxSettingTab(QWidget):
             # 任务完成，设置进度为 100%
             self.update_task_progress_signal.emit(task_index, 100)
             
-            output_path = args[1]
+            output_path = args[2]
             
             # 检查是否使用了切割功能
             is_split = any('--split' in arg for arg in args)
@@ -623,11 +656,16 @@ class MuxSettingTab(QWidget):
                     # 正常情况，检查原始输出路径
                     if os.path.exists(output_path):
                         if self.add_crc_check.isChecked():
+                            # 计算CRC32校验值（用于完整性验证）
                             crc = self.calculate_crc32(output_path)
                             if crc:
-                                new_path = self.add_crc_to_filename(output_path, crc)
-                                if new_path != output_path:
-                                    output_path = new_path
+                                # 只有当输出目录与输入目录相同时才添加CRC到文件名（避免覆盖原文件）
+                                input_dir = os.path.dirname(video_path)
+                                output_dir = os.path.dirname(output_path)
+                                if os.path.abspath(input_dir) == os.path.abspath(output_dir):
+                                    new_path = self.add_crc_to_filename(output_path, crc)
+                                    if new_path != output_path:
+                                        output_path = new_path
                         
                         output_size = get_readable_filesize(os.path.getsize(output_path))
                     else:
@@ -685,6 +723,11 @@ class MuxSettingTab(QWidget):
     def build_mkvmerge_args(self, video_index, video_path, output_path):
         args = ['--gui-mode', '-o', output_path]
         
+        # 添加/清空文件标题
+        # 如果没有填写标题则清空原标题，填写了则设置新标题
+        title = self.title_edit.text().strip()
+        args.extend(['--title', title])
+        
         # 添加视频切割参数
         if video_index in self.video_cut_selections:
             cut_times = self.video_cut_selections[video_index]
@@ -731,6 +774,17 @@ class MuxSettingTab(QWidget):
         default_sub_idx = default_sub_info.get('idx', -1) if isinstance(default_sub_info, dict) else -1
         default_sub_external = default_sub_info.get('external', False) if isinstance(default_sub_info, dict) else False
         
+        lang_name_map = {
+            'chi': '国语',
+            'eng': '英语',
+            'jpn': '日语',
+            'kor': '韩语',
+            'und': ''
+        }
+        
+        # 清空视频轨道名称（视频轨道默认ID为0）
+        args.extend(['--track-name', '0:'])
+        
         sub_languages = self.track_selections.get('subtitle_languages', {}).get(video_index, {})
         
         for i, track in enumerate(video_subs_info):
@@ -738,6 +792,9 @@ class MuxSettingTab(QWidget):
             new_lang = sub_languages.get(i)
             if new_lang:
                 args.extend(['--language', f'{track_id}:{new_lang}'])
+                # 设置轨道名称：非其他语言设置为语言名称，其他语言清空名称
+                track_name = lang_name_map.get(new_lang, '')
+                args.extend(['--track-name', f'{track_id}:{track_name}'])
             if not default_sub_external and i == default_sub_idx:
                 args.extend(['--default-track', f'{track_id}:yes'])
             else:
@@ -754,12 +811,20 @@ class MuxSettingTab(QWidget):
             new_lang = audio_languages.get(i)
             if new_lang:
                 args.extend(['--language', f'{track_id}:{new_lang}'])
+                # 设置轨道名称：非其他语言设置为语言名称，其他语言清空名称
+                track_name = lang_name_map.get(new_lang, '')
+                args.extend(['--track-name', f'{track_id}:{track_name}'])
             if not default_audio_external and i == default_audio_idx:
                 args.extend(['--default-track', f'{track_id}:yes'])
             else:
                 args.extend(['--default-track', f'{track_id}:no'])
         
         attachment_list = GlobalSetting.ATTACHMENT_FILES_ABSOLUTE_PATH_LIST.get(video_index, [])
+        
+        # 如果勾选了清除原附件，即使没有添加新附件也清除原附件
+        if GlobalSetting.ATTACHMENT_REPLACE_EXISTING:
+            args.append('--no-attachments')
+        
         if attachment_list:
             for attachment_path in attachment_list:
                 if os.path.exists(attachment_path):
@@ -775,6 +840,9 @@ class MuxSettingTab(QWidget):
             for i, sub_path in enumerate(sub_list):
                 ext_lang = sub_languages.get(f'ext_{i}', 'chi')
                 args.extend(['--language', f'0:{ext_lang}'])
+                # 设置外部字幕轨道名称
+                ext_track_name = lang_name_map.get(ext_lang, '')
+                args.extend(['--track-name', f'0:{ext_track_name}'])
                 if default_sub_external and f'ext_{i}' == default_sub_idx:
                     args.extend(['--default-track', '0:yes'])
                 else:
@@ -786,6 +854,9 @@ class MuxSettingTab(QWidget):
             for i, audio_path in enumerate(audio_list):
                 ext_lang = audio_languages.get(f'ext_{i}', 'chi')
                 args.extend(['--language', f'0:{ext_lang}'])
+                # 设置外部音轨轨道名称
+                ext_track_name = lang_name_map.get(ext_lang, '')
+                args.extend(['--track-name', f'0:{ext_track_name}'])
                 if default_audio_external and f'ext_{i}' == default_audio_idx:
                     args.extend(['--default-track', '0:yes'])
                 else:
