@@ -3,6 +3,7 @@ import subprocess
 import json
 import os
 import sys
+import logging
 
 
 def get_video_tracks_info(video_path, mkvmerge_path=None):
@@ -35,7 +36,8 @@ def get_video_tracks_info(video_path, mkvmerge_path=None):
         if result.returncode == 0:
             return json.loads(result.stdout)
         return None
-    except Exception:
+    except (subprocess.SubprocessError, json.JSONDecodeError, OSError) as e:
+        logging.warning(f"获取视频轨道信息失败 ({video_path}): {e}")
         return None
 
 
@@ -87,6 +89,33 @@ def get_audio_tracks(video_path, mkvmerge_path=None):
             audios.append(audio_info)
     
     return audios
+
+
+def get_video_tracks(video_path, mkvmerge_path=None):
+    """读取视频文件中的视频轨道信息"""
+    info = get_video_tracks_info(video_path, mkvmerge_path)
+    if not info:
+        return []
+    
+    videos = []
+    tracks = info.get('tracks', [])
+    
+    for track in tracks:
+        if track.get('type') == 'video':
+            properties = track.get('properties', {})
+            video_info = {
+                'id': track.get('id', 0),
+                'language': properties.get('language', 'und'),
+                'name': properties.get('track_name', ''),
+                'is_default': properties.get('default_track', False),
+                'is_forced': properties.get('forced_track', False),
+                'codec': track.get('codec', ''),
+                'width': properties.get('video_pixel_width', 0),
+                'height': properties.get('video_pixel_height', 0)
+            }
+            videos.append(video_info)
+    
+    return videos
 
 
 def format_track_info(track_info, index):

@@ -4,6 +4,7 @@ import re
 import zlib
 import subprocess
 import threading
+import logging
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from PySide6.QtCore import Signal, Qt, QUrl, QEvent, QSize
@@ -38,10 +39,14 @@ class MuxSettingTab(QWidget):
             'subtitle': {}, 
             'default_audio': {}, 
             'default_subtitle': {},
+            'default_video': {},
             'external_audio': {},
             'external_subtitle': {},
             'audio_languages': {},
-            'subtitle_languages': {}
+            'subtitle_languages': {},
+            'audio_track_names': {},
+            'subtitle_track_names': {},
+            'video_track_names': {}
         }
         self.video_cut_selections = {}  # 存储每个视频的切割时间设置
         self.setup_ui()
@@ -223,6 +228,10 @@ class MuxSettingTab(QWidget):
             self.track_selections['external_subtitle'] = selections['external_subtitle']
             self.track_selections['audio_languages'] = selections['audio_languages']
             self.track_selections['subtitle_languages'] = selections['subtitle_languages']
+            self.track_selections['audio_track_names'] = selections.get('audio_track_names', {})
+            self.track_selections['subtitle_track_names'] = selections.get('subtitle_track_names', {})
+            self.track_selections['video_track_names'] = selections.get('video_track_names', {})
+            self.track_selections['default_video'] = selections.get('default_video', {})
     
     def show_video_cut_dialog(self):
         if not GlobalSetting.VIDEO_FILES_LIST:
@@ -359,10 +368,14 @@ class MuxSettingTab(QWidget):
             'subtitle': {}, 
             'default_audio': {}, 
             'default_subtitle': {},
+            'default_video': {},
             'external_audio': {},
             'external_subtitle': {},
             'audio_languages': {},
-            'subtitle_languages': {}
+            'subtitle_languages': {},
+            'audio_track_names': {},
+            'subtitle_track_names': {},
+            'video_track_names': {}
         }
         self.track_select_button.setEnabled(False)
         self.track_select_button.setStyleSheet("""
@@ -396,10 +409,14 @@ class MuxSettingTab(QWidget):
             'subtitle': {}, 
             'default_audio': {}, 
             'default_subtitle': {},
+            'default_video': {},
             'external_audio': {},
             'external_subtitle': {},
             'audio_languages': {},
-            'subtitle_languages': {}
+            'subtitle_languages': {},
+            'audio_track_names': {},
+            'subtitle_track_names': {},
+            'video_track_names': {}
         }
     
     def get_selected_audio_tracks(self):
@@ -543,7 +560,7 @@ class MuxSettingTab(QWidget):
                 output_path = self.get_output_path(video_path)
                 args = self.build_mkvmerge_args(original_video_index, video_path, output_path)
                 
-                future = executor.submit(self.process_single_task, i, args, video_name)
+                future = executor.submit(self.process_single_task, i, args, video_name, video_path)
                 futures[future] = i
             
             for future in as_completed(futures):
@@ -556,7 +573,8 @@ class MuxSettingTab(QWidget):
                         self.update_task_signal.emit(task_index, "失败", "0%", "-")
                         if self.abort_on_error_check.isChecked():
                             has_error[0] = True
-                except Exception:
+                except Exception as e:
+                    logging.error(f"混流任务执行异常: {e}")
                     self.update_task_signal.emit(task_index, "失败", "0%", "-")
                     if self.abort_on_error_check.isChecked():
                         has_error[0] = True
@@ -573,7 +591,7 @@ class MuxSettingTab(QWidget):
         GlobalSetting.MUXING_ON = False
         self.set_button_state(is_muxing=False)
     
-    def process_single_task(self, task_index, args, video_name):
+    def process_single_task(self, task_index, args, video_name, video_path):
         self.update_task_signal.emit(task_index, "执行中", "0%", "-")
         self.update_task_progress_signal.emit(task_index, 0)
         
@@ -676,12 +694,12 @@ class MuxSettingTab(QWidget):
             self.save_log_file(video_name, stdout_text, stderr_text, success)
             
             return success, output_size, return_code
-        except Exception:
+        except Exception as e:
+            logging.error(f"运行mkvmerge异常: {e}")
             return False, "-", -1
     
     def parse_mkvmerge_progress(self, line):
         """解析 mkvmerge 输出中的进度信息"""
-        import re
         # mkvmerge --gui-mode 输出格式是 "#GUI#progress X"
         # 同时也尝试匹配普通模式的格式
         patterns = [
@@ -724,7 +742,6 @@ class MuxSettingTab(QWidget):
         args = ['--gui-mode', '-o', output_path]
         
         # 添加/清空文件标题
-        # 如果没有填写标题则清空原标题，填写了则设置新标题
         title = self.title_edit.text().strip()
         args.extend(['--title', title])
         
@@ -732,43 +749,44 @@ class MuxSettingTab(QWidget):
         if video_index in self.video_cut_selections:
             cut_times = self.video_cut_selections[video_index]
             if cut_times:
-                # 直接使用 cut_times 作为切割参数，格式已经是正确的 start1-end1,start2-end2 格式
                 args.extend(['--split', f'parts:{cut_times}'])
         
+        # 如果勾选了清除原附件
+        if GlobalSetting.ATTACHMENT_REPLACE_EXISTING:
+            args.append('--no-attachments')
+        
+        # 添加附件（必须在视频文件之前）
+        attachment_list = GlobalSetting.ATTACHMENT_FILES_ABSOLUTE_PATH_LIST.get(video_index, [])
+        if attachment_list:
+            for attachment_path in attachment_list:
+                if os.path.exists(attachment_path):
+                    ext = os.path.splitext(attachment_path)[1].lower()
+                    mime_type = self.get_attachment_mime_type(ext)
+                    args.extend(['--attachment-name', 'cover' + ext])
+                    args.extend(['--attachment-mime-type', mime_type])
+                    args.extend(['--attach-file', attachment_path])
+        
+        # 获取轨道信息
+        video_subs_info = GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO[video_index] if video_index < len(GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO) else []
+        video_audios_info = GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO[video_index] if video_index < len(GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO) else []
+        
+        # 获取轨道选择设置
         selected_audio = self.get_selected_audio_tracks()
-        if video_index in selected_audio:
-            if selected_audio[video_index]:
-                tracks_str = ','.join(str(t) for t in selected_audio[video_index])
-                args.extend(['--audio-tracks', tracks_str])
-            else:
-                args.append('--no-audio')
-        else:
-            video_audios = GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO[video_index] if video_index < len(GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO) else []
-            if video_audios:
-                tracks_str = ','.join(str(track.get('id', i)) for i, track in enumerate(video_audios))
-                args.extend(['--audio-tracks', tracks_str])
-        
         selected_subtitle = self.get_selected_subtitle_tracks()
-        sub_list = GlobalSetting.SUBTITLE_FILES_ABSOLUTE_PATH_LIST.get(video_index, [])
-        if video_index in selected_subtitle:
-            if selected_subtitle[video_index]:
-                tracks_str = ','.join(str(t) for t in selected_subtitle[video_index])
-                args.extend(['--subtitle-tracks', tracks_str])
-            else:
-                args.append('--no-subtitles')
-        else:
-            video_subs = GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO[video_index] if video_index < len(GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO) else []
-            if video_subs:
-                tracks_str = ','.join(str(track.get('id', i)) for i, track in enumerate(video_subs))
-                args.extend(['--subtitle-tracks', tracks_str])
+        sub_languages = self.track_selections.get('subtitle_languages', {}).get(video_index, {})
+        audio_languages = self.track_selections.get('audio_languages', {}).get(video_index, {})
+        sub_track_names = self.track_selections.get('subtitle_track_names', {}).get(video_index, {})
+        audio_track_names = self.track_selections.get('audio_track_names', {}).get(video_index, {})
+        video_track_names = self.track_selections.get('video_track_names', {}).get(video_index, {})
         
-        video_subs_info = []
-        if video_index < len(GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO):
-            video_subs_info = GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO[video_index] or []
+        # 外部轨道选择（None=从未保存过，默认全部保留）
+        external_sub_selected = self.track_selections.get('external_subtitle', {}).get(video_index)
+        external_audio_selected = self.track_selections.get('external_audio', {}).get(video_index)
         
-        video_audios_info = []
-        if video_index < len(GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO):
-            video_audios_info = GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO[video_index] or []
+        # 获取默认轨道设置
+        default_audio_info = self.track_selections.get('default_audio', {}).get(video_index, {})
+        default_audio_idx = default_audio_info.get('idx', -1) if isinstance(default_audio_info, dict) else -1
+        default_audio_external = default_audio_info.get('external', False) if isinstance(default_audio_info, dict) else False
         
         default_sub_info = self.track_selections.get('default_subtitle', {}).get(video_index, {})
         default_sub_idx = default_sub_info.get('idx', -1) if isinstance(default_sub_info, dict) else -1
@@ -782,85 +800,122 @@ class MuxSettingTab(QWidget):
             'und': ''
         }
         
-        # 清空视频轨道名称（视频轨道默认ID为0）
-        args.extend(['--track-name', '0:'])
-        
-        sub_languages = self.track_selections.get('subtitle_languages', {}).get(video_index, {})
-        
-        for i, track in enumerate(video_subs_info):
-            track_id = track.get('id', i)
-            new_lang = sub_languages.get(i)
-            if new_lang:
-                args.extend(['--language', f'{track_id}:{new_lang}'])
-                # 设置轨道名称：非其他语言设置为语言名称，其他语言清空名称
-                track_name = lang_name_map.get(new_lang, '')
-                args.extend(['--track-name', f'{track_id}:{track_name}'])
-            if not default_sub_external and i == default_sub_idx:
-                args.extend(['--default-track', f'{track_id}:yes'])
+        # 构建视频文件的轨道选择参数（必须在视频文件之前）
+        if video_index in selected_audio:
+            if selected_audio[video_index]:
+                tracks_str = ','.join(str(t) for t in selected_audio[video_index])
+                args.extend(['--audio-tracks', tracks_str])
             else:
-                args.extend(['--default-track', f'{track_id}:no'])
+                args.append('--no-audio')
+        elif video_audios_info:
+            tracks_str = ','.join(str(track.get('id', i)) for i, track in enumerate(video_audios_info))
+            args.extend(['--audio-tracks', tracks_str])
         
-        default_audio_info = self.track_selections.get('default_audio', {}).get(video_index, {})
-        default_audio_idx = default_audio_info.get('idx', -1) if isinstance(default_audio_info, dict) else -1
-        default_audio_external = default_audio_info.get('external', False) if isinstance(default_audio_info, dict) else False
-        
-        audio_languages = self.track_selections.get('audio_languages', {}).get(video_index, {})
-        
-        for i, track in enumerate(video_audios_info):
-            track_id = track.get('id', i)
-            new_lang = audio_languages.get(i)
-            if new_lang:
-                args.extend(['--language', f'{track_id}:{new_lang}'])
-                # 设置轨道名称：非其他语言设置为语言名称，其他语言清空名称
-                track_name = lang_name_map.get(new_lang, '')
-                args.extend(['--track-name', f'{track_id}:{track_name}'])
-            if not default_audio_external and i == default_audio_idx:
-                args.extend(['--default-track', f'{track_id}:yes'])
+        if video_index in selected_subtitle:
+            if selected_subtitle[video_index]:
+                tracks_str = ','.join(str(t) for t in selected_subtitle[video_index])
+                args.extend(['--subtitle-tracks', tracks_str])
             else:
-                args.extend(['--default-track', f'{track_id}:no'])
+                args.append('--no-subtitles')
+        elif video_subs_info:
+            tracks_str = ','.join(str(track.get('id', i)) for i, track in enumerate(video_subs_info))
+            args.extend(['--subtitle-tracks', tracks_str])
         
-        attachment_list = GlobalSetting.ATTACHMENT_FILES_ABSOLUTE_PATH_LIST.get(video_index, [])
+        # 构建视频文件的内置轨道语言和默认设置参数（必须在视频文件之前）
+        # 处理视频文件的内置字幕轨道参数
+        if video_index not in selected_subtitle or selected_subtitle[video_index]:
+            for i, track in enumerate(video_subs_info):
+                track_id = track.get('id', i)
+                # 从二级字典中获取语言设置（video_index -> track_idx -> lang_code）
+                new_lang = sub_languages.get(i)
+                if new_lang:
+                    args.extend(['--language', f'{track_id}:{new_lang}'])
+                    # 使用用户填写的轨道名称（始终设置，空字符串表示清空）
+                    track_name = sub_track_names.get(i, lang_name_map.get(new_lang, ''))
+                    args.extend(['--track-name', f'{track_id}:{track_name}'])
+                if not default_sub_external and i == default_sub_idx:
+                    args.extend(['--default-track', f'{track_id}:yes'])
         
-        # 如果勾选了清除原附件，即使没有添加新附件也清除原附件
-        if GlobalSetting.ATTACHMENT_REPLACE_EXISTING:
-            args.append('--no-attachments')
+        # 处理视频文件的内置音轨轨道参数
+        if video_index not in selected_audio or selected_audio[video_index]:
+            for i, track in enumerate(video_audios_info):
+                track_id = track.get('id', i)
+                # 从二级字典中获取语言设置（video_index -> track_idx -> lang_code）
+                new_lang = audio_languages.get(i)
+                if new_lang:
+                    args.extend(['--language', f'{track_id}:{new_lang}'])
+                    # 使用用户填写的轨道名称（始终设置，空字符串表示清空）
+                    track_name = audio_track_names.get(i, lang_name_map.get(new_lang, ''))
+                    args.extend(['--track-name', f'{track_id}:{track_name}'])
+                if not default_audio_external and i == default_audio_idx:
+                    args.extend(['--default-track', f'{track_id}:yes'])
         
-        if attachment_list:
-            for attachment_path in attachment_list:
-                if os.path.exists(attachment_path):
-                    ext = os.path.splitext(attachment_path)[1].lower()
-                    mime_type = self.get_attachment_mime_type(ext)
-                    args.extend(['--attachment-name', 'cover' + ext])
-                    args.extend(['--attachment-mime-type', mime_type])
-                    args.extend(['--attach-file', attachment_path])
+        # 处理视频轨道名称（用户设置的值，空字符串=清空，未设置=不改变）
+        video_tracks_info_for_name = GlobalSetting.VIDEO_OLD_TRACKS_VIDEOS_INFO[video_index] if video_index < len(GlobalSetting.VIDEO_OLD_TRACKS_VIDEOS_INFO) else []
+        if video_track_names:
+            for track_idx, track_name in video_track_names.items():
+                if isinstance(track_idx, int) and track_idx < len(video_tracks_info_for_name):
+                    track_id = video_tracks_info_for_name[track_idx].get('id', track_idx)
+                else:
+                    track_id = track_idx
+                args.extend(['--track-name', f'{track_id}:{track_name}'])
+        else:
+            # 没有保存设置时，给视频轨清空名称（仅当有视频轨信息时才操作）
+            if video_tracks_info_for_name:
+                track_id = video_tracks_info_for_name[0].get('id', 0)
+                args.extend(['--track-name', f'{track_id}:'])
         
+        # 添加视频文件路径
         args.append(video_path)
         
+        # 处理外部字幕文件
+        sub_list = GlobalSetting.SUBTITLE_FILES_ABSOLUTE_PATH_LIST.get(video_index, [])
         if sub_list:
             for i, sub_path in enumerate(sub_list):
-                ext_lang = sub_languages.get(f'ext_{i}', 'chi')
-                args.extend(['--language', f'0:{ext_lang}'])
-                # 设置外部字幕轨道名称
-                ext_track_name = lang_name_map.get(ext_lang, '')
-                args.extend(['--track-name', f'0:{ext_track_name}'])
-                if default_sub_external and f'ext_{i}' == default_sub_idx:
-                    args.extend(['--default-track', '0:yes'])
-                else:
-                    args.extend(['--default-track', '0:no'])
+                ext_key = f'ext_{i}'
+                # 如果用户明确取消勾选了外部字幕，则跳过
+                if external_sub_selected is not None and ext_key not in external_sub_selected:
+                    continue
+                ext_lang = sub_languages.get(ext_key, 'chi')
+                is_default = default_sub_external and ext_key == default_sub_idx
+                
+                # 为外部字幕构建参数
+                sub_args = []
+                if ext_lang:
+                    sub_args.extend(['--language', f'0:{ext_lang}'])
+                    # 使用用户填写的轨道名称（始终设置，空字符串表示清空）
+                    ext_track_name = sub_track_names.get(ext_key, lang_name_map.get(ext_lang, ''))
+                    sub_args.extend(['--track-name', f'0:{ext_track_name}'])
+                if is_default:
+                    sub_args.extend(['--default-track', '0:yes'])
+                
+                # 添加外部字幕文件和参数
+                args.extend(sub_args)
                 args.append(sub_path)
         
+        # 处理外部音轨文件
         audio_list = GlobalSetting.AUDIO_FILES_ABSOLUTE_PATH_LIST.get(video_index, [])
         if audio_list:
             for i, audio_path in enumerate(audio_list):
-                ext_lang = audio_languages.get(f'ext_{i}', 'chi')
-                args.extend(['--language', f'0:{ext_lang}'])
-                # 设置外部音轨轨道名称
-                ext_track_name = lang_name_map.get(ext_lang, '')
-                args.extend(['--track-name', f'0:{ext_track_name}'])
-                if default_audio_external and f'ext_{i}' == default_audio_idx:
-                    args.extend(['--default-track', '0:yes'])
-                else:
-                    args.extend(['--default-track', '0:no'])
+                ext_key = f'ext_{i}'
+                # 如果用户明确取消勾选了外部音轨，则跳过
+                if external_audio_selected is not None and ext_key not in external_audio_selected:
+                    continue
+                ext_lang = audio_languages.get(ext_key, 'chi')
+                is_default = default_audio_external and ext_key == default_audio_idx
+                
+                # 为外部音轨构建参数
+                audio_args = []
+                if ext_lang:
+                    audio_args.extend(['--language', f'0:{ext_lang}'])
+                    # 使用用户填写的轨道名称（始终设置，空字符串表示清空）
+                    ext_track_name = audio_track_names.get(ext_key, lang_name_map.get(ext_lang, ''))
+                    audio_args.extend(['--track-name', f'0:{ext_track_name}'])
+                if is_default:
+                    audio_args.extend(['--default-track', '0:yes'])
+                
+                # 添加外部音轨文件和参数
+                args.extend(audio_args)
                 args.append(audio_path)
         
         return args
@@ -887,7 +942,8 @@ class MuxSettingTab(QWidget):
                 for chunk in iter(lambda: f.read(8192), b''):
                     crc = zlib.crc32(chunk, crc)
             return format(crc & 0xFFFFFFFF, '08X')
-        except Exception:
+        except (OSError, zlib.error) as e:
+            logging.warning(f"CRC32计算失败 ({file_path}): {e}")
             return None
     
     def remove_crc_from_filename(self, filename):
@@ -903,7 +959,8 @@ class MuxSettingTab(QWidget):
         try:
             os.rename(file_path, new_path)
             return new_path
-        except Exception:
+        except OSError as e:
+            logging.warning(f"文件重命名失败 ({file_path}): {e}")
             return file_path
     
     def save_log_file(self, video_name, stdout_text, stderr_text, success):
@@ -917,11 +974,15 @@ class MuxSettingTab(QWidget):
         log_dir = os.path.join(output_dir, "logs")
         try:
             os.makedirs(log_dir, exist_ok=True)
-        except Exception:
+        except OSError as e:
+            logging.warning(f"创建日志目录失败 ({log_dir}): {e}")
             return
         
+        # 提取文件名（去掉路径和扩展名）
+        video_basename = os.path.splitext(os.path.basename(video_name))[0]
+        
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_filename = f"{video_name}_{timestamp}.log"
+        log_filename = f"{video_basename}_{timestamp}.log"
         log_path = os.path.join(log_dir, log_filename)
         
         try:
@@ -935,8 +996,8 @@ class MuxSettingTab(QWidget):
                 f.write(stdout_text if stdout_text else "(无)")
                 f.write(f"\n\n=== 标准错误 ===\n")
                 f.write(stderr_text if stderr_text else "(无)")
-        except Exception:
-            pass
+        except OSError as e:
+            logging.warning(f"写入日志文件失败 ({log_path}): {e}")
     
     def update_theme_mode_state(self):
         pass
@@ -1243,6 +1304,7 @@ class VideoPreviewDialog(QDialog):
             # 注意：QMediaPlayer 没有直接的缓存设置 API，它使用系统默认设置
             # 我们可以通过其他方式优化响应速度
         except Exception as e:
+            logging.warning(f"视频加载失败: {e}")
             # 视频加载失败时，显示错误信息但仍允许对话框打开
             error_label = QLabel(f"视频加载失败: {str(e)}")
             error_label.setStyleSheet("color: red;")
@@ -1285,32 +1347,14 @@ class VideoPreviewDialog(QDialog):
             self.mute_button.setStyleSheet("")
     
     def prev_frame(self):
-        # 逐帧后退（这里使用10ms作为一帧的近似值）
-        current_pos = self.player.position()
-        new_pos = max(0, current_pos - 10)
-        # 保存当前播放状态
-        was_playing = self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
-        # 暂停视频以确保画面更新
-        self.player.pause()
-        # 设置新位置
-        self.player.setPosition(new_pos)
-        # 恢复之前的播放状态
-        if was_playing:
-            self.player.play()
+        # 逐帧后退（10ms ≈ 1帧）
+        new_pos = max(0, self.player.position() - 10)
+        self._seek_to(new_pos)
     
     def next_frame(self):
-        # 逐帧前进（这里使用10ms作为一帧的近似值）
-        current_pos = self.player.position()
-        new_pos = min(self.player.duration(), current_pos + 10)
-        # 保存当前播放状态
-        was_playing = self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
-        # 暂停视频以确保画面更新
-        self.player.pause()
-        # 设置新位置
-        self.player.setPosition(new_pos)
-        # 恢复之前的播放状态
-        if was_playing:
-            self.player.play()
+        # 逐帧前进（10ms ≈ 1帧）
+        new_pos = min(self.player.duration(), self.player.position() + 10)
+        self._seek_to(new_pos)
     
     def mark_start_point(self):
         current_pos = self.player.position()
@@ -1387,7 +1431,7 @@ class VideoPreviewDialog(QDialog):
             seconds = int(seconds)
             milliseconds = int(milliseconds)
             return hours * 3600000 + minutes * 60000 + seconds * 1000 + milliseconds
-        except:
+        except (ValueError, IndexError, AttributeError):
             return 0
     
     def format_time(self, ms):
@@ -1399,47 +1443,41 @@ class VideoPreviewDialog(QDialog):
         millisecs = int((seconds % 1) * 1000)
         return f"{hours:02d}:{minutes:02d}:{secs:02d}.{millisecs:03d}"
     
+    def _seek_to(self, new_pos):
+        """统一跳转方法：设置视频位置、更新标签和进度条"""
+        self.player.setPosition(new_pos)
+        self.time_label.setText(self.format_time(new_pos))
+        if not self.is_dragging:
+            self.progress_bar.setValue(new_pos)
+    
     def on_duration_changed(self, duration):
-        # 更新进度条最大值
+        # 更新进度条最大值为视频时长（毫秒），实现精准定位
         self.duration = duration
+        self.progress_bar.setMaximum(duration)
     
     def on_position_changed(self, position):
         # 限制更新频率，避免过于频繁的UI更新导致卡顿
         if position - self.last_update_time >= self.update_interval or position < self.last_update_time:
             self.last_update_time = position
             self.time_label.setText(self.format_time(position))
-            # 更新进度条位置，但在拖拽时不更新
+            # 更新进度条（毫秒精度），拖拽时不更新以免抢焦点
             if self.duration > 0 and not self.is_dragging:
-                progress = int((position / self.duration) * 1000)
-                self.progress_bar.setValue(progress)
+                self.progress_bar.setValue(position)
     
     def on_progress_slider_pressed(self):
         # 进度条开始拖拽
         self.is_dragging = True
     
     def on_progress_slider_released(self):
-        # 进度条拖拽释放时，跳转到对应位置
-        if self.duration > 0:
-            progress = self.progress_bar.value() / 1000
-            position = int(progress * self.duration)
-            self.player.setPosition(position)
+        # 拖拽释放时，一次性跳转到滑块位置（value 即毫秒）
+        position = self.progress_bar.value()
+        self.player.setPosition(position)
         self.is_dragging = False
     
     def on_progress_slider_moved(self, value):
-        # 进度条拖拽过程中更新时间显示和视频画面
-        if self.duration > 0:
-            progress = value / 1000
-            position = int(progress * self.duration)
-            # 暂停视频以确保画面更新
-            was_playing = self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
-            self.player.pause()
-            # 设置新位置
-            self.player.setPosition(position)
-            # 更新时间显示
-            self.time_label.setText(self.format_time(position))
-            # 恢复之前的播放状态
-            if was_playing:
-                self.player.play()
+        # 拖拽过程中只更新标签，不跳转视频（避免频繁 seek 导致卡顿）
+        # 视频跳转延迟到 on_progress_slider_released 时一次性执行
+        self.time_label.setText(self.format_time(value))
     
     def get_cut_times(self):
         # 从切割段列表中获取切割时间
@@ -1507,99 +1545,31 @@ class VideoPreviewDialog(QDialog):
                 event.accept()
                 return True
             elif event.key() == Qt.Key_Left:
-                # 左箭头：向后一秒
-                current_pos = self.player.position()
-                new_pos = max(0, current_pos - 1000)  # 1000ms = 1秒
-                # 保存当前播放状态
-                was_playing = self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
-                # 暂停视频以确保画面更新
-                self.player.pause()
-                # 设置新位置
-                self.player.setPosition(new_pos)
-                # 立即更新时间显示
-                self.time_label.setText(self.format_time(new_pos))
-                # 立即更新进度条
-                if self.duration > 0 and not self.is_dragging:
-                    progress = int((new_pos / self.duration) * 1000)
-                    self.progress_bar.setValue(progress)
-                # 恢复之前的播放状态
-                if was_playing:
-                    self.player.play()
-                # 确保焦点回到进度条
+                # 左箭头：后退1秒
+                new_pos = max(0, self.player.position() - 1000)
+                self._seek_to(new_pos)
                 self.progress_bar.setFocus()
-                # 立即处理事件，提高响应速度
                 event.accept()
                 return True
             elif event.key() == Qt.Key_Right:
-                # 右箭头：前进一秒
-                current_pos = self.player.position()
-                new_pos = min(self.player.duration(), current_pos + 1000)  # 1000ms = 1秒
-                # 保存当前播放状态
-                was_playing = self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
-                # 暂停视频以确保画面更新
-                self.player.pause()
-                # 设置新位置
-                self.player.setPosition(new_pos)
-                # 立即更新时间显示
-                self.time_label.setText(self.format_time(new_pos))
-                # 立即更新进度条
-                if self.duration > 0 and not self.is_dragging:
-                    progress = int((new_pos / self.duration) * 1000)
-                    self.progress_bar.setValue(progress)
-                # 恢复之前的播放状态
-                if was_playing:
-                    self.player.play()
-                # 确保焦点回到进度条
+                # 右箭头：前进1秒
+                new_pos = min(self.player.duration(), self.player.position() + 1000)
+                self._seek_to(new_pos)
                 self.progress_bar.setFocus()
-                # 立即处理事件，提高响应速度
                 event.accept()
                 return True
             elif event.key() == Qt.Key_Up:
-                # 上箭头：上1帧
-                current_pos = self.player.position()
-                new_pos = max(0, current_pos - 10)
-                # 保存当前播放状态
-                was_playing = self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
-                # 暂停视频以确保画面更新
-                self.player.pause()
-                # 设置新位置
-                self.player.setPosition(new_pos)
-                # 立即更新时间显示
-                self.time_label.setText(self.format_time(new_pos))
-                # 立即更新进度条
-                if self.duration > 0 and not self.is_dragging:
-                    progress = int((new_pos / self.duration) * 1000)
-                    self.progress_bar.setValue(progress)
-                # 恢复之前的播放状态
-                if was_playing:
-                    self.player.play()
-                # 确保焦点回到进度条
+                # 上箭头：后退1帧
+                new_pos = max(0, self.player.position() - 10)
+                self._seek_to(new_pos)
                 self.progress_bar.setFocus()
-                # 立即处理事件，提高响应速度
                 event.accept()
                 return True
             elif event.key() == Qt.Key_Down:
-                # 下箭头：下1帧
-                current_pos = self.player.position()
-                new_pos = min(self.player.duration(), current_pos + 10)
-                # 保存当前播放状态
-                was_playing = self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
-                # 暂停视频以确保画面更新
-                self.player.pause()
-                # 设置新位置
-                self.player.setPosition(new_pos)
-                # 立即更新时间显示
-                self.time_label.setText(self.format_time(new_pos))
-                # 立即更新进度条
-                if self.duration > 0 and not self.is_dragging:
-                    progress = int((new_pos / self.duration) * 1000)
-                    self.progress_bar.setValue(progress)
-                # 恢复之前的播放状态
-                if was_playing:
-                    self.player.play()
-                # 确保焦点回到进度条
+                # 下箭头：前进1帧
+                new_pos = min(self.player.duration(), self.player.position() + 10)
+                self._seek_to(new_pos)
                 self.progress_bar.setFocus()
-                # 立即处理事件，提高响应速度
                 event.accept()
                 return True
         return super().eventFilter(obj, event)

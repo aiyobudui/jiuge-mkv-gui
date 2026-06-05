@@ -37,7 +37,7 @@ class Options:
                     Options.Mkvmerge_Path = data.get("mkvmerge_path", "")
                     if Options.FavoritePresetId < len(DefaultPresets):
                         Options.CurrentPreset = DefaultPresets[Options.FavoritePresetId].copy()
-            except:
+            except (json.JSONDecodeError, FileNotFoundError, PermissionError):
                 pass
     
     @staticmethod

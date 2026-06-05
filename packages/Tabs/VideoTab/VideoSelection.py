@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import os
+import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from PySide6.QtCore import Signal, Qt, QMimeData, QUrl
 from PySide6.QtGui import QDragEnterEvent, QDropEvent
@@ -13,7 +14,7 @@ from packages.Startup import GlobalIcons
 from packages.Startup.Options import Options
 from packages.Tabs.GlobalSetting import GlobalSetting, get_readable_filesize
 from packages.Startup.PreDefined import VIDEO_EXTENSIONS
-from packages.Utils.TrackInfo import get_subtitle_tracks, get_audio_tracks, get_attachments
+from packages.Utils.TrackInfo import get_subtitle_tracks, get_audio_tracks, get_attachments, get_video_tracks
 from packages.Widgets.MediaInfoDialog import MediaInfoDialog
 
 
@@ -132,7 +133,9 @@ class VideoSelectionSetting(QWidget):
             if has_mkvmerge:
                 subtitle_tracks = get_subtitle_tracks(file_path)
                 audio_tracks = get_audio_tracks(file_path)
+                video_tracks = get_video_tracks(file_path)
                 attachment_tracks = get_attachments(file_path)
+                GlobalSetting.VIDEO_OLD_TRACKS_VIDEOS_INFO.append(video_tracks)
                 GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO.append(subtitle_tracks)
                 GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO.append(audio_tracks)
                 GlobalSetting.VIDEO_OLD_ATTACHMENTS_INFO.append(attachment_tracks)
@@ -153,6 +156,7 @@ class VideoSelectionSetting(QWidget):
         GlobalSetting.VIDEO_FILES_LIST.clear()
         GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST.clear()
         GlobalSetting.VIDEO_FILES_SIZE_LIST.clear()
+        GlobalSetting.VIDEO_OLD_TRACKS_VIDEOS_INFO.clear()
         GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO.clear()
         GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO.clear()
         GlobalSetting.VIDEO_OLD_ATTACHMENTS_INFO.clear()
@@ -199,6 +203,9 @@ class VideoSelectionSetting(QWidget):
         if has_mkvmerge:
             self.load_track_info_threaded()
         
+        # 更新选中索引，因为复选框默认是选中状态
+        self.update_selected_indices()
+        
         self.video_list_updated.emit()
     
     def refresh_track_info_now(self):
@@ -208,6 +215,7 @@ class VideoSelectionSetting(QWidget):
         if not GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST:
             return
         
+        GlobalSetting.VIDEO_OLD_TRACKS_VIDEOS_INFO.clear()
         GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO.clear()
         GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO.clear()
         GlobalSetting.VIDEO_OLD_ATTACHMENTS_INFO.clear()
@@ -215,7 +223,9 @@ class VideoSelectionSetting(QWidget):
         for i, file_path in enumerate(GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST):
             subtitle_tracks = get_subtitle_tracks(file_path)
             audio_tracks = get_audio_tracks(file_path)
+            video_tracks = get_video_tracks(file_path)
             attachment_tracks = get_attachments(file_path)
+            GlobalSetting.VIDEO_OLD_TRACKS_VIDEOS_INFO.append(video_tracks)
             GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO.append(subtitle_tracks)
             GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO.append(audio_tracks)
             GlobalSetting.VIDEO_OLD_ATTACHMENTS_INFO.append(attachment_tracks)
@@ -340,6 +350,7 @@ class VideoSelectionSetting(QWidget):
         GlobalSetting.VIDEO_FILES_LIST.clear()
         GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST.clear()
         GlobalSetting.VIDEO_FILES_SIZE_LIST.clear()
+        GlobalSetting.VIDEO_OLD_TRACKS_VIDEOS_INFO.clear()
         GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO.clear()
         GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO.clear()
         GlobalSetting.VIDEO_OLD_ATTACHMENTS_INFO.clear()
@@ -358,6 +369,7 @@ class VideoSelectionSetting(QWidget):
         GlobalSetting.VIDEO_FILES_LIST.clear()
         GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST.clear()
         GlobalSetting.VIDEO_FILES_SIZE_LIST.clear()
+        GlobalSetting.VIDEO_OLD_TRACKS_VIDEOS_INFO.clear()
         GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO.clear()
         GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO.clear()
         
@@ -415,14 +427,16 @@ class VideoSelectionSetting(QWidget):
         def get_track_info(file_path):
             subtitle_tracks = get_subtitle_tracks(file_path)
             audio_tracks = get_audio_tracks(file_path)
+            video_tracks = get_video_tracks(file_path)
             attachment_tracks = get_attachments(file_path)
-            return subtitle_tracks, audio_tracks, attachment_tracks
+            return subtitle_tracks, audio_tracks, video_tracks, attachment_tracks
         
         file_paths = GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST.copy()
         total_files = len(file_paths)
         
         temp_subtitles = [None] * total_files
         temp_audios = [None] * total_files
+        temp_videos = [None] * total_files
         temp_attachments = [None] * total_files
         
         with ThreadPoolExecutor(max_workers=4) as executor:
@@ -434,9 +448,10 @@ class VideoSelectionSetting(QWidget):
             for future in as_completed(futures):
                 i = futures[future]
                 try:
-                    subtitle_tracks, audio_tracks, attachment_tracks = future.result()
+                    subtitle_tracks, audio_tracks, video_tracks, attachment_tracks = future.result()
                     temp_subtitles[i] = subtitle_tracks
                     temp_audios[i] = audio_tracks
+                    temp_videos[i] = video_tracks
                     temp_attachments[i] = attachment_tracks
                     
                     sub_item = QTableWidgetItem(str(len(subtitle_tracks)))
@@ -446,9 +461,10 @@ class VideoSelectionSetting(QWidget):
                     audio_item = QTableWidgetItem(str(len(audio_tracks)))
                     audio_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                     self.video_table.setItem(i, 3, audio_item)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logging.warning(f"轨道信息表格设置失败: {e}")
         
+        GlobalSetting.VIDEO_OLD_TRACKS_VIDEOS_INFO = temp_videos
         GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO = temp_subtitles
         GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO = temp_audios
         GlobalSetting.VIDEO_OLD_ATTACHMENTS_INFO = temp_attachments

@@ -23,6 +23,7 @@ class GlobalSetting(QWidget):
     VIDEO_FILES_SIZE_LIST = []
     VIDEO_FILES_ABSOLUTE_PATH_LIST = []
     
+    VIDEO_OLD_TRACKS_VIDEOS_INFO: List[List[dict]] = []
     VIDEO_OLD_TRACKS_SUBTITLES_INFO: List[List[dict]] = []
     VIDEO_OLD_TRACKS_AUDIOS_INFO: List[List[dict]] = []
     VIDEO_OLD_ATTACHMENTS_INFO: List[List[dict]] = []

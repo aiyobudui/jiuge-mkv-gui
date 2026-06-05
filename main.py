@@ -29,7 +29,7 @@ def setup_application_font():
                     font = QFont(font_name, 10)
                     app.setFont(font)
         except Exception:
-            pass
+            logging.warning("字体加载失败，使用系统默认字体")
 
 
 def create_application():
@@ -57,9 +57,9 @@ def kill_all_children():
         for child in children:
             try:
                 child.terminate()
-            except:
+            except psutil.NoSuchProcess:
                 pass
-    except:
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
         pass
 
 

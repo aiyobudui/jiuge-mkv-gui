@@ -5,7 +5,7 @@ from PySide6.QtGui import QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, 
     QPushButton, QComboBox, QTableWidget, QTableWidgetItem,
-    QHeaderView, QFileDialog, QGroupBox, QMessageBox, QFrame, QGraphicsOpacityEffect,
+    QHeaderView, QFileDialog, QGroupBox, QMessageBox, QFrame,
     QCheckBox
 )
 
