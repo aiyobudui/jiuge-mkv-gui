@@ -883,9 +883,10 @@ class MuxSettingTab(QWidget):
                 sub_args = []
                 if ext_lang:
                     sub_args.extend(['--language', f'0:{ext_lang}'])
-                    # 使用用户填写的轨道名称（始终设置，空字符串表示清空）
-                    ext_track_name = sub_track_names.get(ext_key, lang_name_map.get(ext_lang, ''))
-                    sub_args.extend(['--track-name', f'0:{ext_track_name}'])
+                    # 只有当用户明确填写了轨道名称时才设置（空字符串不添加 --track-name 参数）
+                    ext_track_name = sub_track_names.get(ext_key, '')
+                    if ext_track_name:
+                        sub_args.extend(['--track-name', f'0:{ext_track_name}'])
                 if is_default:
                     sub_args.extend(['--default-track', '0:yes'])
                 
@@ -1250,6 +1251,9 @@ class VideoPreviewDialog(QDialog):
         self.help_button.clicked.connect(self.show_help)
         self.ok_button.clicked.connect(self.accept)
         self.cancel_button.clicked.connect(self.reject)
+        
+        # 双击切割段列表时，加载该段的切割点到输入框并跳转到该位置
+        self.segments_list.itemDoubleClicked.connect(self.on_segment_double_clicked)
         self.progress_bar.sliderPressed.connect(self.on_progress_slider_pressed)
         self.progress_bar.sliderReleased.connect(self.on_progress_slider_released)
         self.progress_bar.sliderMoved.connect(self.on_progress_slider_moved)
@@ -1401,6 +1405,19 @@ class VideoPreviewDialog(QDialog):
             self.update_segments_list()
         else:
             QMessageBox.warning(self, "警告", "请先选择要删除的切割段")
+    
+    def on_segment_double_clicked(self, item):
+        """双击切割段列表时，加载该段的切割点到输入框并跳转到开始位置"""
+        index = self.segments_list.row(item)
+        if 0 <= index < len(self.cut_segments):
+            start_time, end_time = self.cut_segments[index]
+            # 将切割点填入输入框
+            self.in_point_edit.setText(start_time)
+            self.out_point_edit.setText(end_time)
+            self.current_segment_start = start_time
+            # 跳转到该切割段的开始位置进行预览
+            start_ms = self.time_to_ms(start_time)
+            self._seek_to(start_ms)
     
     def clear_segments(self):
         self.cut_segments.clear()

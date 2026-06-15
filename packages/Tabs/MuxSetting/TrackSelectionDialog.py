@@ -504,11 +504,11 @@ class TrackSelectionDialog(QDialog):
                 if video_idx in self.track_selections.get('subtitle_languages', {}) and ext_key in subtitle_languages:
                     lang = subtitle_languages[ext_key]
                 
-                # 计算初始轨道名称：保存值 > 文件名
+                # 计算初始轨道名称：保存值 > 空（用户可手动填写）
                 if video_idx in self.track_selections.get('subtitle_track_names', {}) and ext_key in subtitle_track_names:
                     init_track_name = subtitle_track_names[ext_key]
                 else:
-                    init_track_name = sub_name  # 外部字幕用文件名
+                    init_track_name = ''  # 外部字幕默认不填写轨道名称
                 
                 item = QTreeWidgetItem(video_item)
                 item.setText(0, "")
@@ -669,7 +669,7 @@ class TrackSelectionDialog(QDialog):
                 if video_idx not in result[f'external_{track_type}']:
                     result[f'external_{track_type}'][video_idx] = []
                 if checkbox.isChecked():
-                    result[f'external_{track_type}'][video_idx].append(track_idx)
+                    result[f'external_{track_type}'][video_idx].append(f'ext_{track_idx}')
             else:
                 if checkbox.isChecked():
                     result[track_type][video_idx].append(track_id)
