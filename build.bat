@@ -56,7 +56,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [Step 7/9] Building EXE...
+echo [Step 7/8] Building EXE...
 echo.
 
 python -m PyInstaller --windowed --name "JiuGe MKV Muxer GUI" --icon="Resources\Icons\App.ico" --add-data "Resources;Resources" --hidden-import PySide6.QtMultimedia --hidden-import PySide6.QtMultimediaWidgets --clean main.py
@@ -67,12 +67,6 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
-
-echo.
-echo [Step 7/8] Copying additional files...
-if not exist "dist\JiuGe MKV Muxer GUI\Resources\Icons" mkdir "dist\JiuGe MKV Muxer GUI\Resources\Icons"
-xcopy /Y /Q "Resources\Icons\*.*" "dist\JiuGe MKV Muxer GUI\Resources\Icons\"
-echo     Done!
 
 echo.
 echo [Step 8/8] Cleaning build temp files...

@@ -4,6 +4,10 @@ import sys
 
 if getattr(sys, 'frozen', False):
     ROOT_DIR = os.path.dirname(sys.executable)
+    # 检查是否在 _internal 目录下（PyInstaller 新版本行为）
+    _internal_dir = os.path.join(ROOT_DIR, '_internal')
+    if os.path.exists(_internal_dir) and os.path.isdir(_internal_dir):
+        ROOT_DIR = _internal_dir
 else:
     ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 

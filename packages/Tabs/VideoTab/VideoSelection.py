@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 import os
+import re
 import logging
+import threading
+import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from PySide6.QtCore import Signal, Qt, QMimeData, QUrl
 from PySide6.QtGui import QDragEnterEvent, QDropEvent
@@ -14,8 +17,8 @@ from packages.Startup import GlobalIcons
 from packages.Startup.Options import Options
 from packages.Tabs.GlobalSetting import GlobalSetting, get_readable_filesize
 from packages.Startup.PreDefined import VIDEO_EXTENSIONS
-from packages.Utils.TrackInfo import get_subtitle_tracks, get_audio_tracks, get_attachments, get_video_tracks
-from packages.Widgets.MediaInfoDialog import MediaInfoDialog
+from packages.Utils.TrackInfo import get_subtitle_tracks, get_audio_tracks, get_attachments, get_video_tracks, get_video_title
+from packages.Widgets.ExtractTracksDialog import ExtractTracksDialog
 
 
 class VideoSelectionSetting(QWidget):
@@ -118,17 +121,25 @@ class VideoSelectionSetting(QWidget):
             
             self.video_table.setItem(row, 1, QTableWidgetItem(file_name))
             
-            sub_item = QTableWidgetItem("...")
-            sub_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.video_table.setItem(row, 2, sub_item)
-            
             audio_item = QTableWidgetItem("...")
             audio_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.video_table.setItem(row, 3, audio_item)
+            self.video_table.setItem(row, 2, audio_item)
+            
+            sub_item = QTableWidgetItem("...")
+            sub_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.video_table.setItem(row, 3, sub_item)
+            
+            attachment_item = QTableWidgetItem("...")
+            attachment_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.video_table.setItem(row, 4, attachment_item)
+            
+            title_item = QTableWidgetItem("")
+            title_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.video_table.setItem(row, 5, title_item)
             
             size_item = QTableWidgetItem(get_readable_filesize(file_size))
             size_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.video_table.setItem(row, 4, size_item)
+            self.video_table.setItem(row, 6, size_item)
             
             if has_mkvmerge:
                 subtitle_tracks = get_subtitle_tracks(file_path)
@@ -140,13 +151,22 @@ class VideoSelectionSetting(QWidget):
                 GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO.append(audio_tracks)
                 GlobalSetting.VIDEO_OLD_ATTACHMENTS_INFO.append(attachment_tracks)
                 
-                sub_item = QTableWidgetItem(str(len(subtitle_tracks)))
-                sub_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.video_table.setItem(row, 2, sub_item)
-                
                 audio_item = QTableWidgetItem(str(len(audio_tracks)))
                 audio_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.video_table.setItem(row, 3, audio_item)
+                self.video_table.setItem(row, 2, audio_item)
+                
+                sub_item = QTableWidgetItem(str(len(subtitle_tracks)))
+                sub_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self.video_table.setItem(row, 3, sub_item)
+                
+                attachment_item = QTableWidgetItem(str(len(attachment_tracks)))
+                attachment_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self.video_table.setItem(row, 4, attachment_item)
+                
+                title = get_video_title(file_path)
+                title_item = QTableWidgetItem(title)
+                title_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self.video_table.setItem(row, 5, title_item)
         
         self.update_selected_indices()
         self.video_list_updated.emit()
@@ -188,17 +208,25 @@ class VideoSelectionSetting(QWidget):
             
             self.video_table.setItem(row, 1, QTableWidgetItem(file_name))
             
-            sub_item = QTableWidgetItem("...")
-            sub_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.video_table.setItem(row, 2, sub_item)
-            
             audio_item = QTableWidgetItem("...")
             audio_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.video_table.setItem(row, 3, audio_item)
+            self.video_table.setItem(row, 2, audio_item)
+            
+            sub_item = QTableWidgetItem("...")
+            sub_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.video_table.setItem(row, 3, sub_item)
+            
+            attachment_item = QTableWidgetItem("...")
+            attachment_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.video_table.setItem(row, 4, attachment_item)
+            
+            title_item = QTableWidgetItem("")
+            title_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.video_table.setItem(row, 5, title_item)
             
             size_item = QTableWidgetItem(get_readable_filesize(file_size))
             size_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.video_table.setItem(row, 4, size_item)
+            self.video_table.setItem(row, 6, size_item)
         
         if has_mkvmerge:
             self.load_track_info_threaded()
@@ -231,13 +259,21 @@ class VideoSelectionSetting(QWidget):
             GlobalSetting.VIDEO_OLD_ATTACHMENTS_INFO.append(attachment_tracks)
             
             if i < self.video_table.rowCount():
-                sub_item = QTableWidgetItem(str(len(subtitle_tracks)))
-                sub_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.video_table.setItem(i, 2, sub_item)
-                
                 audio_item = QTableWidgetItem(str(len(audio_tracks)))
                 audio_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.video_table.setItem(i, 3, audio_item)
+                self.video_table.setItem(i, 2, audio_item)
+                
+                sub_item = QTableWidgetItem(str(len(subtitle_tracks)))
+                sub_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self.video_table.setItem(i, 3, sub_item)
+                
+                attachment_item = QTableWidgetItem(str(len(attachment_tracks)))
+                attachment_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self.video_table.setItem(i, 4, attachment_item)
+                
+                title = get_video_title(file_path)
+                title_item = QTableWidgetItem(title)
+                self.video_table.setItem(i, 5, title_item)
     
     def setup_ui(self):
         main_layout = QVBoxLayout()
@@ -275,10 +311,13 @@ class VideoSelectionSetting(QWidget):
         self.select_all_checkbox.setChecked(True)
         info_layout.addWidget(self.select_all_checkbox)
         
-        self.media_info_button = QPushButton("媒体信息")
-        self.media_info_button.setFixedWidth(80)
-        info_layout.addWidget(self.media_info_button)
         info_layout.addStretch()
+        
+        self.extract_tracks_button = QPushButton("轨道提取")
+        self.extract_tracks_button.setStyleSheet("background-color: #0078d4; color: white; font-weight: bold;")
+        self.extract_tracks_button.setFixedWidth(80)
+        info_layout.addWidget(self.extract_tracks_button)
+        
         source_layout.addLayout(info_layout)
         
         source_group.setLayout(source_layout)
@@ -288,17 +327,33 @@ class VideoSelectionSetting(QWidget):
         table_layout = QVBoxLayout()
         
         self.video_table = QTableWidget()
-        self.video_table.setColumnCount(5)
-        self.video_table.setHorizontalHeaderLabels(["选择", "名称", "字幕轨", "音轨", "大小"])
+        self.video_table.setColumnCount(7)
+        self.video_table.setHorizontalHeaderLabels(["选择", "文件名", "音轨", "字幕轨", "附件", "视频标题", "大小"])
         self.video_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
         self.video_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.video_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Fixed)
         self.video_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Fixed)
         self.video_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Fixed)
+        self.video_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Fixed)
+        self.video_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.Fixed)
         self.video_table.setColumnWidth(0, 50)
         self.video_table.setColumnWidth(2, 60)
         self.video_table.setColumnWidth(3, 60)
-        self.video_table.setColumnWidth(4, 100)
+        self.video_table.setColumnWidth(4, 60)
+        self.video_table.setColumnWidth(5, 120)
+        self.video_table.setColumnWidth(6, 100)
+        
+        from PySide6.QtWidgets import QStyledItemDelegate
+        class CenterAlignDelegate(QStyledItemDelegate):
+            def initStyleOption(self, option, index):
+                super().initStyleOption(option, index)
+                option.displayAlignment = Qt.AlignmentFlag.AlignCenter
+        self.video_table.setItemDelegateForColumn(2, CenterAlignDelegate())
+        self.video_table.setItemDelegateForColumn(3, CenterAlignDelegate())
+        self.video_table.setItemDelegateForColumn(4, CenterAlignDelegate())
+        self.video_table.setItemDelegateForColumn(5, CenterAlignDelegate())
+        self.video_table.setItemDelegateForColumn(6, CenterAlignDelegate())
+        
         self.video_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.video_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.video_table.setAlternatingRowColors(True)
@@ -313,8 +368,8 @@ class VideoSelectionSetting(QWidget):
         self.browse_button.clicked.connect(self.browse_folder)
         self.clear_button.clicked.connect(self.clear_files)
         self.refresh_button.clicked.connect(self.refresh_files)
-        self.media_info_button.clicked.connect(self.show_media_info)
         self.select_all_checkbox.stateChanged.connect(self.toggle_select_all)
+        self.extract_tracks_button.clicked.connect(self.show_extract_tracks_dialog)
     
     def update_selected_indices(self):
         GlobalSetting.VIDEO_SELECTED_INDICES.clear()
@@ -406,17 +461,25 @@ class VideoSelectionSetting(QWidget):
             
             self.video_table.setItem(row, 1, QTableWidgetItem(file_name))
             
-            sub_item = QTableWidgetItem("...")
-            sub_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.video_table.setItem(row, 2, sub_item)
-            
             audio_item = QTableWidgetItem("...")
             audio_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.video_table.setItem(row, 3, audio_item)
+            self.video_table.setItem(row, 2, audio_item)
+            
+            sub_item = QTableWidgetItem("...")
+            sub_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.video_table.setItem(row, 3, sub_item)
+            
+            attachment_item = QTableWidgetItem("...")
+            attachment_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.video_table.setItem(row, 4, attachment_item)
+            
+            title_item = QTableWidgetItem("")
+            title_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.video_table.setItem(row, 5, title_item)
             
             size_item = QTableWidgetItem(get_readable_filesize(file_size))
             size_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.video_table.setItem(row, 4, size_item)
+            self.video_table.setItem(row, 6, size_item)
         
         if has_mkvmerge:
             self.load_track_info_threaded()
@@ -454,13 +517,21 @@ class VideoSelectionSetting(QWidget):
                     temp_videos[i] = video_tracks
                     temp_attachments[i] = attachment_tracks
                     
-                    sub_item = QTableWidgetItem(str(len(subtitle_tracks)))
-                    sub_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                    self.video_table.setItem(i, 2, sub_item)
-                    
                     audio_item = QTableWidgetItem(str(len(audio_tracks)))
                     audio_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                    self.video_table.setItem(i, 3, audio_item)
+                    self.video_table.setItem(i, 2, audio_item)
+                    
+                    sub_item = QTableWidgetItem(str(len(subtitle_tracks)))
+                    sub_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    self.video_table.setItem(i, 3, sub_item)
+                    
+                    attachment_item = QTableWidgetItem(str(len(attachment_tracks)))
+                    attachment_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    self.video_table.setItem(i, 4, attachment_item)
+                    
+                    title = get_video_title(file_paths[i])
+                    title_item = QTableWidgetItem(title)
+                    self.video_table.setItem(i, 5, title_item)
                 except Exception as e:
                     logging.warning(f"轨道信息表格设置失败: {e}")
         
@@ -469,32 +540,11 @@ class VideoSelectionSetting(QWidget):
         GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO = temp_audios
         GlobalSetting.VIDEO_OLD_ATTACHMENTS_INFO = temp_attachments
     
-    def show_media_info(self):
-        selected_rows = self.video_table.selectedItems()
-        if not selected_rows:
-            QMessageBox.information(self, "提示", "请先选择一个视频文件")
-            return
-        
-        row = selected_rows[0].row()
-        if row < len(GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST):
-            file_path = GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST[row]
-            file_name = GlobalSetting.VIDEO_FILES_LIST[row]
-            file_size = GlobalSetting.VIDEO_FILES_SIZE_LIST[row]
-            
-            subtitle_tracks = GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO[row]
-            audio_tracks = GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO[row]
-            
-            dialog = MediaInfoDialog(self)
-            dialog.set_media_info(
-                file_name,
-                file_path,
-                get_readable_filesize(file_size),
-                audio_tracks,
-                subtitle_tracks
-            )
-            dialog.exec()
+    def update_theme_mode_state(self):
+        pass
     
     def get_selected_files(self):
+        """获取勾选的视频行索引"""
         selected = []
         for row in range(self.video_table.rowCount()):
             checkbox = self.video_table.cellWidget(row, 0)
@@ -502,8 +552,19 @@ class VideoSelectionSetting(QWidget):
                 selected.append(row)
         return selected
     
-    def update_theme_mode_state(self):
-        pass
+    def show_extract_tracks_dialog(self):
+        """打开轨道提取对话框"""
+        if not GlobalSetting.VIDEO_FILES_LIST:
+            QMessageBox.warning(self, "警告", "请先添加视频文件")
+            return
+        
+        if not Options.Mkvmerge_Path or not os.path.exists(Options.Mkvmerge_Path):
+            QMessageBox.warning(self, "警告", "请先设置 mkvmerge.exe 路径")
+            return
+        
+        selected_rows = self.get_selected_files()
+        dialog = ExtractTracksDialog(self, selected_rows)
+        dialog.exec()
     
     def refresh_video_list(self):
         if self.source_path_edit.text():

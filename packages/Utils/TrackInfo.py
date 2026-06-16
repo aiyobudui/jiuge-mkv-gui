@@ -41,6 +41,24 @@ def get_video_tracks_info(video_path, mkvmerge_path=None):
         return None
 
 
+def get_video_fps(video_path, mkvmerge_path=None):
+    """获取视频的帧率"""
+    info = get_video_tracks_info(video_path, mkvmerge_path)
+    if not info:
+        return None
+    
+    tracks = info.get('tracks', [])
+    for track in tracks:
+        if track.get('type') == 'video':
+            properties = track.get('properties', {})
+            fps_num = properties.get('fps_num', 0)
+            fps_den = properties.get('fps_den', 1)
+            if fps_num and fps_den:
+                return fps_num / fps_den
+            return None
+    return None
+
+
 def get_subtitle_tracks(video_path, mkvmerge_path=None):
     info = get_video_tracks_info(video_path, mkvmerge_path)
     if not info:
@@ -118,8 +136,26 @@ def get_video_tracks(video_path, mkvmerge_path=None):
     return videos
 
 
+def get_video_title(video_path, mkvmerge_path=None):
+    """获取视频文件的标题信息（读取视频元数据中的title属性）"""
+    info = get_video_tracks_info(video_path, mkvmerge_path)
+    if not info:
+        return ""
+    
+    if info.get('title'):
+        return info['title']
+    
+    if 'properties' in info and info['properties'].get('title'):
+        return info['properties']['title']
+    
+    if 'container' in info and 'properties' in info['container']:
+        if info['container']['properties'].get('title'):
+            return info['container']['properties']['title']
+    
+    return ""
+
+
 def format_track_info(track_info, index):
-    lang = track_info.get('language', 'und')
     name = track_info.get('name', '')
     codec = track_info.get('codec', '')
     is_default = " [默认]" if track_info.get('is_default') else ""

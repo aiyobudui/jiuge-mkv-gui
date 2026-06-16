@@ -35,8 +35,16 @@ def setup_application_font():
 def create_application():
     global app
     app = QApplication(sys.argv)
+    # 调试图标路径
+    icon_path = os.path.join(GlobalFiles.IconsPath, "App.ico")
+    logging.info(f"ROOT_DIR: {GlobalFiles.ROOT_DIR}")
+    logging.info(f"IconsPath: {GlobalFiles.IconsPath}")
+    logging.info(f"Icon path: {icon_path}")
+    logging.info(f"Icon exists: {os.path.exists(icon_path)}")
     if GlobalIcons.AppIcon:
         app.setWindowIcon(GlobalIcons.AppIcon.get())
+    else:
+        logging.warning("AppIcon is null or empty")
 
 
 def create_window():

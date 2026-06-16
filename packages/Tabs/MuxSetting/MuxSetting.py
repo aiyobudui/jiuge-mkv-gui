@@ -1099,8 +1099,10 @@ class VideoPreviewDialog(QDialog):
         self.is_muted = False  # 标记是否静音
         self.cut_segments = []  # 切割段列表，每个元素为 (start_time, end_time)
         self.current_segment_start = None  # 当前正在设置的段的开始时间
+        self.editing_segment_index = None  # 当前正在编辑的切割段索引
         self.last_update_time = 0  # 上次更新时间，用于限制更新频率
         self.update_interval = 100  # 更新间隔，单位毫秒
+        
         self.setup_ui()
         self.load_video()
         # 加载之前的切割设置
@@ -1141,11 +1143,16 @@ class VideoPreviewDialog(QDialog):
         self.out_point_edit = QLineEdit()
         self.out_point_edit.setPlaceholderText("HH:MM:SS.fff")
         self.out_point_edit.setFixedWidth(180)
+        self.save_segment_button = QPushButton("保存")
+        self.save_segment_button.setFixedWidth(60)
+        self.save_segment_button.setEnabled(False)
         points_group_layout.addWidget(self.in_point_label)
         points_group_layout.addWidget(self.in_point_edit)
         points_group_layout.addSpacing(20)
         points_group_layout.addWidget(self.out_point_label)
         points_group_layout.addWidget(self.out_point_edit)
+        points_group_layout.addSpacing(10)
+        points_group_layout.addWidget(self.save_segment_button)
         points_group_layout.addStretch()
         points_group.setLayout(points_group_layout)
         left_layout.addWidget(points_group)
@@ -1248,6 +1255,7 @@ class VideoPreviewDialog(QDialog):
         self.add_segment_button.clicked.connect(self.add_segment)
         self.remove_segment_button.clicked.connect(self.remove_segment)
         self.clear_segments_button.clicked.connect(self.clear_segments)
+        self.save_segment_button.clicked.connect(self.save_segment)
         self.help_button.clicked.connect(self.show_help)
         self.ok_button.clicked.connect(self.accept)
         self.cancel_button.clicked.connect(self.reject)
@@ -1329,7 +1337,8 @@ class VideoPreviewDialog(QDialog):
     
     def pause_video(self):
         self.player.pause()
-        # 更新按钮高亮状态
+        current_pos = self.player.position()
+        self.time_label.setText(self.format_time(current_pos))
         self.play_button.setStyleSheet("")
         self.pause_button.setStyleSheet("background-color: #106ebe; color: white;")
         self.stop_button.setStyleSheet("")
@@ -1378,16 +1387,15 @@ class VideoPreviewDialog(QDialog):
         end_time = self.out_point_edit.text().strip()
         
         if start_time and end_time:
-            # 验证时间格式
             if self.validate_time_format(start_time) and self.validate_time_format(end_time):
-                # 确保开始时间小于结束时间
                 if self.time_to_ms(start_time) < self.time_to_ms(end_time):
                     self.cut_segments.append((start_time, end_time))
                     self.update_segments_list()
-                    # 清空输入框，准备设置下一段
                     self.in_point_edit.clear()
                     self.out_point_edit.clear()
                     self.current_segment_start = None
+                    self.editing_segment_index = None
+                    self.save_segment_button.setEnabled(False)
                 else:
                     QMessageBox.warning(self, "警告", "开始时间必须小于结束时间")
             else:
@@ -1411,11 +1419,11 @@ class VideoPreviewDialog(QDialog):
         index = self.segments_list.row(item)
         if 0 <= index < len(self.cut_segments):
             start_time, end_time = self.cut_segments[index]
-            # 将切割点填入输入框
             self.in_point_edit.setText(start_time)
             self.out_point_edit.setText(end_time)
             self.current_segment_start = start_time
-            # 跳转到该切割段的开始位置进行预览
+            self.editing_segment_index = index
+            self.save_segment_button.setEnabled(True)
             start_ms = self.time_to_ms(start_time)
             self._seek_to(start_ms)
     
@@ -1425,12 +1433,46 @@ class VideoPreviewDialog(QDialog):
         self.in_point_edit.clear()
         self.out_point_edit.clear()
         self.current_segment_start = None
+        self.editing_segment_index = None
+        self.save_segment_button.setEnabled(False)
     
     def update_segments_list(self):
         self.segments_list.clear()
         for i, (start, end) in enumerate(self.cut_segments):
             item_text = f"段 {i+1}: {start} - {end}"
             self.segments_list.addItem(item_text)
+    
+    def save_segment(self):
+        """保存修改后的切割段"""
+        if self.editing_segment_index is None:
+            QMessageBox.warning(self, "警告", "请先双击选择要修改的切割段")
+            return
+        
+        start_time = self.in_point_edit.text().strip()
+        end_time = self.out_point_edit.text().strip()
+        
+        if not start_time or not end_time:
+            QMessageBox.warning(self, "警告", "请填写完整的开始时间和结束时间")
+            return
+        
+        if not self.validate_time_format(start_time):
+            QMessageBox.warning(self, "警告", "开始时间格式不正确，请使用 HH:MM:SS.fff 格式")
+            return
+        
+        if not self.validate_time_format(end_time):
+            QMessageBox.warning(self, "警告", "结束时间格式不正确，请使用 HH:MM:SS.fff 格式")
+            return
+        
+        start_ms = self.time_to_ms(start_time)
+        end_ms = self.time_to_ms(end_time)
+        
+        if start_ms >= end_ms:
+            QMessageBox.warning(self, "警告", "结束时间必须大于开始时间")
+            return
+        
+        self.cut_segments[self.editing_segment_index] = (start_time, end_time)
+        self.update_segments_list()
+        QMessageBox.information(self, "提示", "切割段修改成功")
     
     def validate_time_format(self, time_str):
         # 验证时间格式是否为 HH:MM:SS.fff
