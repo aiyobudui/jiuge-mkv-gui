@@ -2,9 +2,7 @@
 import os
 import re
 import logging
-import threading
 import subprocess
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from PySide6.QtCore import Signal, Qt, QMimeData, QUrl
 from PySide6.QtGui import QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import (
@@ -17,7 +15,7 @@ from packages.Startup import GlobalIcons
 from packages.Startup.Options import Options
 from packages.Tabs.GlobalSetting import GlobalSetting, get_readable_filesize
 from packages.Startup.PreDefined import VIDEO_EXTENSIONS
-from packages.Utils.TrackInfo import get_subtitle_tracks, get_audio_tracks, get_attachments, get_video_tracks, get_video_title
+from packages.Utils.TrackInfo import get_subtitle_tracks, get_audio_tracks, get_attachments, get_video_tracks
 from packages.Widgets.ExtractTracksDialog import ExtractTracksDialog
 
 
@@ -25,11 +23,14 @@ class VideoSelectionSetting(QWidget):
     tab_clicked_signal = Signal()
     video_list_updated = Signal()
     refresh_track_info = Signal()
+    # 新增：用于跨线程更新 UI 的信号
+    update_track_info_signal = Signal(int, int, int, int, str)  # index, audio_count, sub_count, attach_count, title
     
     def __init__(self):
         super().__init__()
         self.setAcceptDrops(True)
         self.current_source_dir = ""
+        self._track_info_gen = 0  # 生成计数器，丢弃过期结果
         self.setup_ui()
         self.connect_signals()
     
@@ -80,10 +81,10 @@ class VideoSelectionSetting(QWidget):
             new_files = [vf for vf in video_files if vf not in existing_files]
             
             if new_files:
-                total_count = len(GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST) + len(new_files)
-                
-                if total_count == 1:
-                    self.current_source_dir = os.path.dirname(new_files[0])
+                # 检测所有拖拽文件的公共目录
+                dirs = set(os.path.dirname(f) for f in new_files)
+                if len(dirs) == 1:
+                    self.current_source_dir = dirs.pop()
                     self.source_path_edit.setText(self.current_source_dir)
                 else:
                     self.current_source_dir = ""
@@ -141,35 +142,18 @@ class VideoSelectionSetting(QWidget):
             size_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self.video_table.setItem(row, 6, size_item)
             
-            if has_mkvmerge:
-                subtitle_tracks = get_subtitle_tracks(file_path)
-                audio_tracks = get_audio_tracks(file_path)
-                video_tracks = get_video_tracks(file_path)
-                attachment_tracks = get_attachments(file_path)
-                GlobalSetting.VIDEO_OLD_TRACKS_VIDEOS_INFO.append(video_tracks)
-                GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO.append(subtitle_tracks)
-                GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO.append(audio_tracks)
-                GlobalSetting.VIDEO_OLD_ATTACHMENTS_INFO.append(attachment_tracks)
-                
-                audio_item = QTableWidgetItem(str(len(audio_tracks)))
-                audio_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.video_table.setItem(row, 2, audio_item)
-                
-                sub_item = QTableWidgetItem(str(len(subtitle_tracks)))
-                sub_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.video_table.setItem(row, 3, sub_item)
-                
-                attachment_item = QTableWidgetItem(str(len(attachment_tracks)))
-                attachment_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.video_table.setItem(row, 4, attachment_item)
-                
-                title = get_video_title(file_path)
-                title_item = QTableWidgetItem(title)
-                title_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.video_table.setItem(row, 5, title_item)
+            # 追加空轨道占位，后续由 load_track_info_threaded 在后台填充
+            GlobalSetting.VIDEO_OLD_TRACKS_VIDEOS_INFO.append([])
+            GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO.append([])
+            GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO.append([])
+            GlobalSetting.VIDEO_OLD_ATTACHMENTS_INFO.append([])
         
         self.update_selected_indices()
         self.video_list_updated.emit()
+        
+        # 后台线程加载轨道信息，不阻塞 UI
+        if has_mkvmerge:
+            self.load_track_info_threaded()
     
     def load_video_files(self, file_paths):
         self.video_table.setRowCount(0)
@@ -237,43 +221,29 @@ class VideoSelectionSetting(QWidget):
         self.video_list_updated.emit()
     
     def refresh_track_info_now(self):
+        """刷新视频轨道信息（异步，通过后台线程加载）"""
         if not Options.Mkvmerge_Path or not os.path.exists(Options.Mkvmerge_Path):
             return
         
         if not GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST:
             return
         
+        # 清空旧轨道数据并重置 UI 为 "..."，然后启动后台线程加载
         GlobalSetting.VIDEO_OLD_TRACKS_VIDEOS_INFO.clear()
         GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO.clear()
         GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO.clear()
         GlobalSetting.VIDEO_OLD_ATTACHMENTS_INFO.clear()
         
-        for i, file_path in enumerate(GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST):
-            subtitle_tracks = get_subtitle_tracks(file_path)
-            audio_tracks = get_audio_tracks(file_path)
-            video_tracks = get_video_tracks(file_path)
-            attachment_tracks = get_attachments(file_path)
-            GlobalSetting.VIDEO_OLD_TRACKS_VIDEOS_INFO.append(video_tracks)
-            GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO.append(subtitle_tracks)
-            GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO.append(audio_tracks)
-            GlobalSetting.VIDEO_OLD_ATTACHMENTS_INFO.append(attachment_tracks)
-            
-            if i < self.video_table.rowCount():
-                audio_item = QTableWidgetItem(str(len(audio_tracks)))
-                audio_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.video_table.setItem(i, 2, audio_item)
-                
-                sub_item = QTableWidgetItem(str(len(subtitle_tracks)))
-                sub_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.video_table.setItem(i, 3, sub_item)
-                
-                attachment_item = QTableWidgetItem(str(len(attachment_tracks)))
-                attachment_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.video_table.setItem(i, 4, attachment_item)
-                
-                title = get_video_title(file_path)
-                title_item = QTableWidgetItem(title)
-                self.video_table.setItem(i, 5, title_item)
+        for i in range(self.video_table.rowCount()):
+            for col in (2, 3, 4):
+                item = QTableWidgetItem("...")
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self.video_table.setItem(i, col, item)
+            title_item = QTableWidgetItem("")
+            title_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.video_table.setItem(i, 5, title_item)
+        
+        self.load_track_info_threaded()
     
     def setup_ui(self):
         main_layout = QVBoxLayout()
@@ -370,6 +340,8 @@ class VideoSelectionSetting(QWidget):
         self.refresh_button.clicked.connect(self.refresh_files)
         self.select_all_checkbox.stateChanged.connect(self.toggle_select_all)
         self.extract_tracks_button.clicked.connect(self.show_extract_tracks_dialog)
+        # 连接跨线程更新 UI 的信号
+        self.update_track_info_signal.connect(self.update_track_info_ui)
     
     def update_selected_indices(self):
         GlobalSetting.VIDEO_SELECTED_INDICES.clear()
@@ -380,6 +352,30 @@ class VideoSelectionSetting(QWidget):
                 if checkbox and checkbox.isChecked():
                     GlobalSetting.VIDEO_SELECTED_INDICES.append(row)
         self.video_list_updated.emit()
+    
+    def update_track_info_ui(self, index, audio_count, sub_count, attach_count, title):
+        """在主线程中更新 UI（通过信号槽跨线程调用）"""
+        if index < 0 or index >= self.video_table.rowCount():
+            return
+        
+        # 更新音频轨道数量
+        audio_item = QTableWidgetItem(str(audio_count))
+        audio_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.video_table.setItem(index, 2, audio_item)
+        
+        # 更新字幕轨道数量
+        sub_item = QTableWidgetItem(str(sub_count))
+        sub_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.video_table.setItem(index, 3, sub_item)
+        
+        # 更新附件数量
+        attachment_item = QTableWidgetItem(str(attach_count))
+        attachment_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.video_table.setItem(index, 4, attachment_item)
+        
+        # 更新标题
+        title_item = QTableWidgetItem(title)
+        self.video_table.setItem(index, 5, title_item)
     
     def toggle_select_all(self, state):
         checked = state == Qt.CheckState.Checked.value
@@ -412,8 +408,13 @@ class VideoSelectionSetting(QWidget):
         self.video_list_updated.emit()
     
     def refresh_files(self):
+        # 如果有源文件夹路径，扫描文件夹（文件夹模式）
         if self.source_path_edit.text():
             self.load_videos()
+        # 否则如果有已加载的文件（拖拽模式），只刷新元数据，不重新扫描文件夹
+        elif GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST:
+            self.refresh_track_info_now()
+            self.video_list_updated.emit()
     
     def load_videos(self):
         folder = self.source_path_edit.text()
@@ -427,6 +428,7 @@ class VideoSelectionSetting(QWidget):
         GlobalSetting.VIDEO_OLD_TRACKS_VIDEOS_INFO.clear()
         GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO.clear()
         GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO.clear()
+        GlobalSetting.VIDEO_OLD_ATTACHMENTS_INFO.clear()
         
         files = []
         for f in os.listdir(folder):
@@ -487,58 +489,112 @@ class VideoSelectionSetting(QWidget):
         self.update_selected_indices()
     
     def load_track_info_threaded(self):
-        def get_track_info(file_path):
-            subtitle_tracks = get_subtitle_tracks(file_path)
-            audio_tracks = get_audio_tracks(file_path)
-            video_tracks = get_video_tracks(file_path)
-            attachment_tracks = get_attachments(file_path)
-            return subtitle_tracks, audio_tracks, video_tracks, attachment_tracks
+        """使用 BackgroundRunner 在后台线程中加载视频轨道信息"""
+        self._track_info_gen += 1
         
         file_paths = GlobalSetting.VIDEO_FILES_ABSOLUTE_PATH_LIST.copy()
         total_files = len(file_paths)
         
+        if total_files == 0:
+            return
+        
+        from packages.Utils.BackgroundRunner import BackgroundRunner
+        
+        # 临时存储（后台线程写入，线程安全：每索引只写一次）
         temp_subtitles = [None] * total_files
         temp_audios = [None] * total_files
         temp_videos = [None] * total_files
         temp_attachments = [None] * total_files
+        temp_titles = [None] * total_files
         
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            futures = {}
-            for i, fp in enumerate(file_paths):
-                future = executor.submit(get_track_info, fp)
-                futures[future] = i
+        def on_task_done(task_id, result):
+            """每完成一个文件的解析"""
+            subtitle_tracks = result.get('subtitle_tracks', [])
+            audio_tracks = result.get('audio_tracks', [])
+            video_tracks = result.get('video_tracks', [])
+            attachment_tracks = result.get('attachment_tracks', [])
+            title = result.get('title', '')
+            
+            temp_subtitles[task_id] = subtitle_tracks
+            temp_audios[task_id] = audio_tracks
+            temp_videos[task_id] = video_tracks
+            temp_attachments[task_id] = attachment_tracks
+            temp_titles[task_id] = title
+            
+            self.update_track_info_signal.emit(
+                task_id, len(audio_tracks), len(subtitle_tracks),
+                len(attachment_tracks), title
+            )
         
-            for future in as_completed(futures):
-                i = futures[future]
-                try:
-                    subtitle_tracks, audio_tracks, video_tracks, attachment_tracks = future.result()
-                    temp_subtitles[i] = subtitle_tracks
-                    temp_audios[i] = audio_tracks
-                    temp_videos[i] = video_tracks
-                    temp_attachments[i] = attachment_tracks
-                    
-                    audio_item = QTableWidgetItem(str(len(audio_tracks)))
-                    audio_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                    self.video_table.setItem(i, 2, audio_item)
-                    
-                    sub_item = QTableWidgetItem(str(len(subtitle_tracks)))
-                    sub_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                    self.video_table.setItem(i, 3, sub_item)
-                    
-                    attachment_item = QTableWidgetItem(str(len(attachment_tracks)))
-                    attachment_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                    self.video_table.setItem(i, 4, attachment_item)
-                    
-                    title = get_video_title(file_paths[i])
-                    title_item = QTableWidgetItem(title)
-                    self.video_table.setItem(i, 5, title_item)
-                except Exception as e:
-                    logging.warning(f"轨道信息表格设置失败: {e}")
+        def on_all_done(completed, failed, total):
+            """全部解析完成，写入 GlobalSetting"""
+            GlobalSetting.VIDEO_OLD_TRACKS_VIDEOS_INFO = temp_videos
+            GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO = temp_subtitles
+            GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO = temp_audios
+            GlobalSetting.VIDEO_OLD_ATTACHMENTS_INFO = temp_attachments
+            
+            if not hasattr(GlobalSetting, 'VIDEO_TITLES'):
+                GlobalSetting.VIDEO_TITLES = [None] * total_files
+            GlobalSetting.VIDEO_TITLES = temp_titles
         
-        GlobalSetting.VIDEO_OLD_TRACKS_VIDEOS_INFO = temp_videos
-        GlobalSetting.VIDEO_OLD_TRACKS_SUBTITLES_INFO = temp_subtitles
-        GlobalSetting.VIDEO_OLD_TRACKS_AUDIOS_INFO = temp_audios
-        GlobalSetting.VIDEO_OLD_ATTACHMENTS_INFO = temp_attachments
+        if not hasattr(self, '_track_info_runner'):
+            self._track_info_runner = BackgroundRunner()
+            self._track_info_runner.task_error.connect(
+                lambda tid, err: logging.warning(f"视频轨道信息获取失败 (task {tid}): {err}")
+            )
+        
+        self._track_info_runner.run(
+            file_paths, self._get_track_info_worker,
+            on_task_done=on_task_done, on_all_done=on_all_done
+        )
+    
+    @staticmethod
+    def _get_track_info_worker(file_path, task_id):
+        """获取单个视频的全部轨道信息（BackgroundRunner worker 签名）。
+        
+        Returns:
+            dict: 包含 subtitle_tracks, audio_tracks, video_tracks, attachment_tracks, title
+        """
+        from packages.Utils.TrackInfo import get_video_tracks_info
+        
+        try:
+            info = get_video_tracks_info(file_path)
+        except Exception as e:
+            logging.warning(f"get_video_tracks_info 异常 ({file_path}): {e}")
+            return {'subtitle_tracks': [], 'audio_tracks': [], 'video_tracks': [],
+                    'attachment_tracks': [], 'title': ''}
+        
+        subtitle_tracks = []
+        audio_tracks = []
+        video_tracks = []
+        attachment_tracks = []
+        title = ""
+        
+        if info:
+            tracks = info.get('tracks', [])
+            for track in tracks:
+                track_type = track.get('type', '')
+                if track_type == 'subtitle':
+                    subtitle_tracks.append(track)
+                elif track_type == 'audio':
+                    audio_tracks.append(track)
+                elif track_type == 'video':
+                    video_tracks.append(track)
+            
+            attachment_tracks = info.get('attachments', [])
+            
+            if info.get('title'):
+                title = info['title']
+            elif 'properties' in info and info['properties'].get('title'):
+                title = info['properties']['title']
+        
+        return {
+            'subtitle_tracks': subtitle_tracks,
+            'audio_tracks': audio_tracks,
+            'video_tracks': video_tracks,
+            'attachment_tracks': attachment_tracks,
+            'title': title,
+        }
     
     def update_theme_mode_state(self):
         pass

@@ -6,7 +6,7 @@ import threading
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from PySide6.QtCore import Qt, Signal, QMetaObject, Q_ARG
+from PySide6.QtCore import Qt, Signal, Slot, QMetaObject, Q_ARG
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -452,7 +452,9 @@ class ExtractTracksDialog(QDialog):
             return success
 
         try:
-            with ThreadPoolExecutor(max_workers=4) as executor:
+            from packages.Utils.BackgroundRunner import BackgroundRunner
+            workers = BackgroundRunner.calc_workers(len(selections))
+            with ThreadPoolExecutor(max_workers=workers) as executor:
                 futures = [executor.submit(extract_one_task, args) for args in selections]
                 for future in as_completed(futures):
                     if self.stop_requested:
@@ -496,6 +498,7 @@ class ExtractTracksDialog(QDialog):
         self.select_all_audio_btn.setEnabled(True)
         self.deselect_all_audio_btn.setEnabled(True)
 
+    @Slot(str)
     def _show_error(self, message):
         """显示错误消息（主线程）"""
         msg_box = QMessageBox(self)

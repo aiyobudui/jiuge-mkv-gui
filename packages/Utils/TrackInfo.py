@@ -161,7 +161,7 @@ def format_track_info(track_info, index):
     is_default = " [默认]" if track_info.get('is_default') else ""
     is_forced = " [强制]" if track_info.get('is_forced') else ""
     
-    display = f"#{index} {lang}"
+    display = f"#{index} {track_info.get('language', 'und')}"
     if name:
         display += f" ({name})"
     if codec:

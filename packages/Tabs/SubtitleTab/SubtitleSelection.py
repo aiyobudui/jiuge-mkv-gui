@@ -1,17 +1,19 @@
 # -*- coding: utf-8 -*-
 import os
-from PySide6.QtCore import Signal, Qt, QTimer, QPropertyAnimation, QEasingCurve
+from PySide6.QtCore import Signal, Qt
 from PySide6.QtGui import QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QTableWidget, QTableWidgetItem,
-    QHeaderView, QFileDialog, QGroupBox, QMessageBox, QFrame
+    QHeaderView, QFileDialog, QGroupBox, QMessageBox
 )
 
 from packages.Startup import GlobalIcons
 from packages.Startup.Options import Options
 from packages.Tabs.GlobalSetting import GlobalSetting
 from packages.Startup.PreDefined import SUBTITLE_EXTENSIONS
+from packages.Widgets.FloatingReorderButtons import FloatingReorderButtons
+from packages.Utils.TableHelpers import populate_video_ref_table
 
 
 class SubtitleSelectionSetting(QWidget):
@@ -24,10 +26,6 @@ class SubtitleSelectionSetting(QWidget):
         self.subtitle_files = []
         self.current_selected_row = -1
         self.last_click_pos = None
-        self.hide_timer = QTimer()
-        self.hide_timer.setSingleShot(True)
-        self.hide_timer.timeout.connect(self.start_fade_out)
-        self.fade_animation = None
         self.setup_ui()
         self.connect_signals()
     
@@ -64,7 +62,7 @@ class SubtitleSelectionSetting(QWidget):
                 folders.append(path)
         
         if non_subtitle_files and not subtitle_files and not folders:
-            QMessageBox.warning(self, "提示", "支持的字幕格式：\n.srt .ass .ssa .sub .sup .idx .vtt")
+            QMessageBox.warning(self, "提示", "支持的字幕格式：\n.srt .ass ...")
             event.ignore()
             return
         
@@ -133,7 +131,7 @@ class SubtitleSelectionSetting(QWidget):
         source_group.setLayout(source_layout)
         main_layout.addWidget(source_group)
         
-        match_group = QGroupBox("字幕匹配（按序号一一对应）")
+        match_group = QGroupBox("字幕匹配")
         match_layout = QHBoxLayout()
         
         video_table_widget = QWidget()
@@ -169,49 +167,10 @@ class SubtitleSelectionSetting(QWidget):
         self.subtitle_table.setEditTriggers(QTableWidget.NoEditTriggers)
         subtitle_layout.addWidget(self.subtitle_table)
         
-        self.floating_btn_frame = QFrame(self.subtitle_table)
-        self.floating_btn_frame.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool)
-        self.floating_btn_frame.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
-        self.floating_btn_frame.setStyleSheet("""
-            QFrame {
-                background-color: #f0f0f0;
-                border: 1px solid #ccc;
-                border-radius: 4px;
-            }
-            QPushButton {
-                background-color: #ffffff;
-                border: 1px solid #ccc;
-                border-radius: 3px;
-                padding: 2px 8px;
-                min-width: 30px;
-            }
-            QPushButton:hover {
-                background-color: #e0e0e0;
-            }
-            QPushButton:pressed {
-                background-color: #d0d0d0;
-            }
-        """)
-        
-        floating_layout = QHBoxLayout(self.floating_btn_frame)
-        floating_layout.setContentsMargins(4, 2, 4, 2)
-        floating_layout.setSpacing(4)
-        
-        self.up_btn = QPushButton("↑上移")
-        self.up_btn.setFixedHeight(24)
-        self.up_btn.clicked.connect(self.move_subtitle_up)
-        
-        self.down_btn = QPushButton("↓下移")
-        self.down_btn.setFixedHeight(24)
-        self.down_btn.clicked.connect(self.move_subtitle_down)
-        
-        floating_layout.addWidget(self.up_btn)
-        floating_layout.addWidget(self.down_btn)
-        
-        self.floating_btn_frame.enterEvent = self._on_frame_enter
-        self.floating_btn_frame.leaveEvent = self._on_frame_leave
-        
-        self.floating_btn_frame.hide()
+        # ── 浮动重排序按钮（统一组件） ──
+        self.floating_btns = FloatingReorderButtons(self.subtitle_table)
+        self.floating_btns.move_up.connect(self.move_subtitle_up)
+        self.floating_btns.move_down.connect(self.move_subtitle_down)
         
         subtitle_table_widget.setLayout(subtitle_layout)
         
@@ -234,96 +193,24 @@ class SubtitleSelectionSetting(QWidget):
         self.subtitle_table.itemClicked.connect(self.on_subtitle_clicked)
     
     def hideEvent(self, event):
-        self.hide_timer.stop()
-        self.floating_btn_frame.hide()
+        self.floating_btns.hide_buttons()
         super().hideEvent(event)
     
     def mousePressEvent(self, event):
-        if self.floating_btn_frame.isVisible():
-            table_rect = self.subtitle_table.rect()
-            table_rect.moveTo(self.subtitle_table.mapToGlobal(table_rect.topLeft()))
-            frame_rect = self.floating_btn_frame.rect()
-            frame_rect.moveTo(self.floating_btn_frame.pos())
-            
-            click_pos = event.globalPosition().toPoint() if hasattr(event, 'globalPosition') else event.globalPos()
-            
-            if not table_rect.contains(click_pos) and not frame_rect.contains(click_pos):
-                self.hide_timer.stop()
-                self.floating_btn_frame.hide()
-        
+        global_pos = event.globalPosition().toPoint() if hasattr(event, 'globalPosition') else event.globalPos()
+        self.floating_btns.check_click_outside(global_pos)
         super().mousePressEvent(event)
     
     def on_subtitle_clicked(self, item):
         row = item.row()
         self.current_selected_row = row
         self.last_click_pos = self.subtitle_table.cursor().pos()
-        self.show_floating_buttons(row, self.last_click_pos)
+        self.floating_btns.show_for_row(row, self.last_click_pos)
     
     def on_video_table_clicked(self, item):
-        self.hide_timer.stop()
-        self.floating_btn_frame.hide()
+        self.floating_btns.hide_buttons()
     
-    def show_floating_buttons(self, row, global_pos=None):
-        self.hide_timer.stop()
-        
-        if row < 0 or row >= self.subtitle_table.rowCount():
-            self.floating_btn_frame.hide()
-            return
-        
-        if global_pos:
-            x = global_pos.x() - self.floating_btn_frame.sizeHint().width() - 10
-            y = global_pos.y() - self.floating_btn_frame.sizeHint().height() // 2
-        elif hasattr(self, 'last_click_pos') and self.last_click_pos:
-            x = self.last_click_pos.x() - self.floating_btn_frame.sizeHint().width() - 10
-            y = self.last_click_pos.y() - self.floating_btn_frame.sizeHint().height() // 2
-        else:
-            rect = self.subtitle_table.visualItemRect(self.subtitle_table.item(row, 1))
-            table_pos = self.subtitle_table.mapToGlobal(rect.topRight())
-            x = table_pos.x() - self.floating_btn_frame.sizeHint().width() - 5
-            y = table_pos.y() + (rect.height() - self.floating_btn_frame.sizeHint().height()) // 2
-        
-        self.floating_btn_frame.move(x, y)
-        self.floating_btn_frame.setWindowOpacity(1.0)
-        self.floating_btn_frame.show()
-        self.floating_btn_frame.raise_()
-        
-        self.up_btn.setEnabled(row > 0)
-        self.down_btn.setEnabled(row < self.subtitle_table.rowCount() - 1)
-        
-        self.hide_timer.start(3000)
-    
-    def start_fade_out(self):
-        if self.fade_animation:
-            self.fade_animation.stop()
-        
-        self.fade_animation = QPropertyAnimation(self.floating_btn_frame, b"windowOpacity")
-        self.fade_animation.setDuration(500)
-        self.fade_animation.setStartValue(1.0)
-        self.fade_animation.setEndValue(0.0)
-        self.fade_animation.setEasingCurve(QEasingCurve.Type.OutQuad)
-        self.fade_animation.finished.connect(self.floating_btn_frame.hide)
-        self.fade_animation.start()
-    
-    def on_floating_btn_entered(self):
-        self.hide_timer.stop()
-        if self.fade_animation:
-            self.fade_animation.stop()
-        self.floating_btn_frame.setWindowOpacity(1.0)
-    
-    def on_floating_btn_left(self):
-        self.hide_timer.start(3000)
-    
-    def _on_frame_enter(self, event):
-        self.hide_timer.stop()
-        if self.fade_animation:
-            self.fade_animation.stop()
-        self.floating_btn_frame.setWindowOpacity(1.0)
-    
-    def _on_frame_leave(self, event):
-        self.hide_timer.start(3000)
-    
-    def move_subtitle_up(self):
-        row = self.current_selected_row
+    def move_subtitle_up(self, row):
         if row <= 0:
             return
         
@@ -333,11 +220,10 @@ class SubtitleSelectionSetting(QWidget):
         self.refresh_subtitle_table()
         self.current_selected_row = row - 1
         self.subtitle_table.selectRow(self.current_selected_row)
-        self.show_floating_buttons(self.current_selected_row, self.last_click_pos)
+        self.floating_btns.show_for_row(self.current_selected_row, self.last_click_pos)
         self.auto_match_by_index()
     
-    def move_subtitle_down(self):
-        row = self.current_selected_row
+    def move_subtitle_down(self, row):
         if row < 0 or row >= len(self.subtitle_files) - 1:
             return
         
@@ -347,7 +233,7 @@ class SubtitleSelectionSetting(QWidget):
         self.refresh_subtitle_table()
         self.current_selected_row = row + 1
         self.subtitle_table.selectRow(self.current_selected_row)
-        self.show_floating_buttons(self.current_selected_row, self.last_click_pos)
+        self.floating_btns.show_for_row(self.current_selected_row, self.last_click_pos)
         self.auto_match_by_index()
     
     def refresh_subtitle_table(self):
@@ -371,7 +257,7 @@ class SubtitleSelectionSetting(QWidget):
         self.subtitle_table.setRowCount(0)
         self.subtitle_files = []
         self.current_selected_row = -1
-        self.floating_btn_frame.hide()
+        self.floating_btns.hide_buttons()
         GlobalSetting.SUBTITLE_FILES_ABSOLUTE_PATH_LIST.clear()
         GlobalSetting.SUBTITLE_LANGUAGE.clear()
     
@@ -387,7 +273,7 @@ class SubtitleSelectionSetting(QWidget):
         self.subtitle_table.setRowCount(0)
         self.subtitle_files = []
         self.current_selected_row = -1
-        self.floating_btn_frame.hide()
+        self.floating_btns.hide_buttons()
         
         files = []
         for f in os.listdir(folder):
@@ -427,15 +313,4 @@ class SubtitleSelectionSetting(QWidget):
         self.refresh_video_list()
     
     def refresh_video_list(self):
-        self.video_table.setRowCount(0)
-        for idx, video_idx in enumerate(GlobalSetting.VIDEO_SELECTED_INDICES, 1):
-            if video_idx < len(GlobalSetting.VIDEO_FILES_LIST):
-                video_name = GlobalSetting.VIDEO_FILES_LIST[video_idx]
-                row = self.video_table.rowCount()
-                self.video_table.insertRow(row)
-                idx_item = QTableWidgetItem(str(idx))
-                idx_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.video_table.setItem(row, 0, idx_item)
-                self.video_table.setItem(row, 1, QTableWidgetItem(video_name))
-        
-        self.auto_match_by_index()
+        populate_video_ref_table(self.video_table, self.auto_match_by_index)

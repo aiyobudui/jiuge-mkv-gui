@@ -1,5 +1,27 @@
 # 更新说明
 
+## v1.4.1
+
+### 修复问题
+
+- 修复单段视频切割后输出大小显示 "-" 的问题（新增单段切割自动检测分支）
+- 修复视频切割对话框中快捷键失效的问题（eventFilter 未覆盖 QLineEdit/QListWidget）
+- 修复视频切割 accept() 按钮静默丢失数据的问题（格式错误时静默跳过，合法时调用 save_segment）
+- 修复 save_segment() 缺少去重检查的问题（已存在相同时间段则弹窗提示）
+- 修复 TrackInfo.format_track_info() 引用未定义变量 `lang` 导致的崩溃
+- 修复 load_videos() 漏清 ATTACHMENTS_INFO 导致数据残留
+- 修复 VideoPreviewDialog 打开时 CMD 窗口闪烁（_detect_frame_rate_sync 补加 CREATE_NO_WINDOW）
+
+### 优化改进
+
+- **多线程统一**：新增 BackgroundRunner 通用后台任务执行器，MuxSetting/VideoSelection 均改为统一入口
+- **代码复用**：抽取 FloatingReorderButtons 浮动按钮组件（Audio/Subtitle/AttachmentSelection 共享，消除 ~360 行重复）
+- **代码复用**：抽取 TableHelpers.populate_video_ref_table() 统一视频列表填充逻辑
+- **安全提取**：process_single_task 输出路径改用 _get_output_path_from_args() 动态查找，消除硬编码 args[2]
+- **行为统一**：外部音轨 --track-name 与字幕行为对齐（仅非空时设置）
+- 日志文件命名简化为"文件名.log"，去掉时间戳
+- 任务表格中处理前/后大小列居中对齐
+
 ## v1.4.0
 
 ### 新增功能

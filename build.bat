@@ -59,7 +59,7 @@ echo.
 echo [Step 7/8] Building EXE...
 echo.
 
-python -m PyInstaller --windowed --name "JiuGe MKV Muxer GUI" --icon="Resources\Icons\App.ico" --add-data "Resources;Resources" --hidden-import PySide6.QtMultimedia --hidden-import PySide6.QtMultimediaWidgets --clean main.py
+python -m PyInstaller --windowed --name "JiuGe MKV Muxer GUI" --icon="Resources\Icons\App.ico" --add-data "Resources;Resources" --hidden-import PySide6.QtMultimedia --hidden-import PySide6.QtMultimediaWidgets --hidden-import packages.Tabs.MuxSetting.MuxSetting --collect-submodules packages --clean main.py
 
 if errorlevel 1 (
     echo.
